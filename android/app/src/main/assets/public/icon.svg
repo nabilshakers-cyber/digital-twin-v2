@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#0a0e17"/>
+      <stop offset="100%" stop-color="#06283d"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="55%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="190" fill="url(#glow)" stroke="url(#ring)" stroke-width="10"/>
+  <!-- Crescent & Twin geometric emblem -->
+  <path d="M292 132c-64 12-112 68-112 136 0 68 48 124 112 136-78 8-148-54-148-136s70-144 148-136z" fill="url(#ring)"/>
+  <!-- Digital spark star -->
+  <path d="M332 162l12 34 34 12-34 12-12 34-12-34-34-12 34-12 12-34z" fill="#34d399"/>
+  <!-- Check pulse accent -->
+  <path d="M222 276l30 30 68-74" fill="none" stroke="#f0f6fc" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

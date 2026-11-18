@@ -1,0 +1,554 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "User Digital Twin profile, app settings, dashboard layout, and daily Adhkar state synced across devices.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the workspace owner."
+        },
+        "profile": {
+          "type": "object",
+          "description": "Digital Twin persona, productivity target, dailyEnergyLevel, and optional endOfDayOverloadAlertEnabled / endOfDayAlertTime configuration."
+        },
+        "dashboardLayout": {
+          "type": "array",
+          "description": "Ordered visibility configuration for dashboard sections and custom widgets (max 60 items)."
+        },
+        "adhkarState": {
+          "type": "object",
+          "description": "Daily morning and evening Adhkar completion state."
+        },
+        "quranNotificationsEnabled": {
+          "type": "boolean"
+        },
+        "pushEnabled": {
+          "type": "boolean"
+        },
+        "soundEnabled": {
+          "type": "boolean"
+        },
+        "autoDndEnabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "profile",
+        "dashboardLayout",
+        "adhkarState",
+        "quranNotificationsEnabled",
+        "pushEnabled",
+        "soundEnabled",
+        "autoDndEnabled",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TaskItem": {
+      "title": "TaskItem",
+      "description": "An actionable user task with optional subtasks and scheduling metadata.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "category": {
+          "type": "string",
+          "enum": ["work", "personal", "health", "study", "urgent"],
+          "maxLength": 32
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "maxLength": 16
+        },
+        "status": {
+          "type": "string",
+          "enum": ["todo", "in_progress", "completed"],
+          "maxLength": 32
+        },
+        "estimatedMinutes": {
+          "type": "number"
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "dueTime": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "energyRequired": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "maxLength": 16
+        },
+        "subtasks": {
+          "type": "array",
+          "description": "Bounded subtasks list (max 50)."
+        },
+        "isTopPriority": {
+          "type": "boolean"
+        },
+        "isUnclassified": {
+          "type": "boolean"
+        },
+        "clientCreatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "completedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "goalId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "category",
+        "priority",
+        "status",
+        "energyRequired",
+        "clientCreatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ScheduleBlock": {
+      "title": "ScheduleBlock",
+      "description": "A time-blocked calendar entry linked to Gregorian/Hijri dates.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "startTime": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "endTime": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1500
+        },
+        "category": {
+          "type": "string",
+          "enum": ["deep_work", "meeting", "routine", "health", "personal", "review"],
+          "maxLength": 32
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "maxLength": 16
+        },
+        "energyLevel": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "maxLength": 16
+        },
+        "relatedTaskId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "isCompleted": {
+          "type": "boolean"
+        },
+        "isFixed": {
+          "type": "boolean"
+        },
+        "iconName": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "startTime",
+        "endTime",
+        "title",
+        "category",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GoalItem": {
+      "title": "GoalItem",
+      "description": "Long-term personal or professional goal tracked by the user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "category": {
+          "type": "string",
+          "enum": ["work", "personal", "learning", "health"],
+          "maxLength": 32
+        },
+        "progress": {
+          "type": "number"
+        },
+        "targetDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "associatedProject": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "category",
+        "progress",
+        "targetDate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "QuranRoutineDoc": {
+      "title": "QuranRoutineDoc",
+      "description": "Daily Quran memorization, review, or reading routine item.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["review", "reading", "memorization"],
+          "maxLength": 32
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "targetAmount": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "completed": {
+          "type": "boolean"
+        },
+        "timeSlot": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "streak": {
+          "type": "number"
+        },
+        "quickLink": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "type",
+        "title",
+        "targetAmount",
+        "completed",
+        "timeSlot",
+        "streak",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CustomWidgetDoc": {
+      "title": "CustomWidgetDoc",
+      "description": "User-created custom dashboard widget (note, checklist, counter, or links).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["note", "checklist", "counter", "links"],
+          "maxLength": 32
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "color": {
+          "type": "string",
+          "enum": ["cyan", "emerald", "amber", "indigo", "rose"],
+          "maxLength": 24
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "items": {
+          "type": "array",
+          "description": "Bounded widget checklist or quick links items (max 50)."
+        },
+        "count": {
+          "type": "number"
+        },
+        "target": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "clientCreatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "kind",
+        "title",
+        "icon",
+        "color",
+        "clientCreatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PhoneAppListDoc": {
+      "title": "PhoneAppListDoc",
+      "description": "Categorized phone app quick-launcher list.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "color": {
+          "type": "string",
+          "enum": ["cyan", "emerald", "amber", "indigo", "rose"],
+          "maxLength": 24
+        },
+        "apps": {
+          "type": "array",
+          "description": "Bounded phone app shortcuts (max 50)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "title",
+        "icon",
+        "color",
+        "apps",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserWorkspace"
+      },
+      "description": "Owner-isolated Digital Twin settings, preferences, layout, and Adhkar document."
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": {
+        "$ref": "#/entities/TaskItem"
+      },
+      "description": "User tasks synced across devices."
+    },
+    "/users/{userId}/schedule/{blockId}": {
+      "schema": {
+        "$ref": "#/entities/ScheduleBlock"
+      },
+      "description": "User calendar and daily time blocks synced across devices."
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": {
+        "$ref": "#/entities/GoalItem"
+      },
+      "description": "User long-term goals synced across devices."
+    },
+    "/users/{userId}/quranRoutine/{itemId}": {
+      "schema": {
+        "$ref": "#/entities/QuranRoutineDoc"
+      },
+      "description": "User Quran routine items synced across devices."
+    },
+    "/users/{userId}/customWidgets/{widgetId}": {
+      "schema": {
+        "$ref": "#/entities/CustomWidgetDoc"
+      },
+      "description": "User custom dashboard widgets synced across devices."
+    },
+    "/users/{userId}/phoneAppLists/{listId}": {
+      "schema": {
+        "$ref": "#/entities/PhoneAppListDoc"
+      },
+      "description": "User phone app shortcut lists synced across devices."
+    }
+  }
+}
