@@ -11,8 +11,6 @@ workflows:
         script: npm install
       - name: Install Capacitor
         script: npm install @capacitor/cli @capacitor/android
-      - name: Add Android Platform
-        script: npx cap add android
       - name: Build Web App
         script: npm run build
       - name: Sync Web Assets
