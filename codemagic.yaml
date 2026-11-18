@@ -3,7 +3,7 @@ workflows:
     name: Build Android APK
     environment:
       node: latest
-      java: 17
+      java: 21
       vars:
         VITE_API_BASE: "https://digital-twin-v2-o9dw.onrender.com"
     scripts:
