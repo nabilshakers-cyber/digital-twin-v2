@@ -717,8 +717,110 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  const renderLayoutEntry = (entry: DashboardLayoutEntry, idx: number): React.ReactNode => {
+    if (!entry.visible) return null;
+    const content = renderSectionContent(entry);
+    if (!content) return null;
+
+    const customWidget = entry.isCustom
+      ? customWidgets.find((w) => w.id === entry.id)
+      : undefined;
+
+    if (!isLayoutEditMode) {
+      return <React.Fragment key={entry.id}>{content}</React.Fragment>;
+    }
+
+    return (
+      <div
+        key={entry.id}
+        className="rounded-2xl border-2 border-dashed border-cyan-500/40 p-2 bg-cyan-950/10 space-y-2 transition-all"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-900/95 border border-slate-800 text-xs">
+          <div className="flex items-center gap-2 font-bold text-cyan-300">
+            <span>{getSectionTitle(entry)}</span>
+            {entry.isCustom && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                مخصص
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {onMoveLayoutEntry && (
+              <>
+                <button
+                  type="button"
+                  disabled={idx === 0}
+                  onClick={() => onMoveLayoutEntry(entry.id, 'up')}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer disabled:cursor-not-allowed"
+                  title="تحريك لأعلى"
+                >
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={idx === dashboardLayout.length - 1}
+                  onClick={() => onMoveLayoutEntry(entry.id, 'down')}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer disabled:cursor-not-allowed"
+                  title="تحريك لأسفل"
+                >
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+
+            {customWidget && (
+              <button
+                type="button"
+                onClick={() => openCustomizerModal('create', customWidget)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 cursor-pointer"
+              >
+                <Edit3 className="w-3 h-3" />
+                <span>تعديل</span>
+              </button>
+            )}
+
+            {onToggleWidgetVisibility && (
+              <button
+                type="button"
+                onClick={() => onToggleWidgetVisibility(entry.id)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-amber-950 text-amber-300 cursor-pointer"
+                title="إخفاء من اللوحة"
+              >
+                <EyeOff className="w-3 h-3" />
+                <span>إخفاء</span>
+              </button>
+            )}
+
+            {customWidget && onDeleteCustomWidget && (
+              <button
+                type="button"
+                onClick={() => onDeleteCustomWidget(customWidget.id)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 cursor-pointer"
+                title="حذف نهائي"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>حذف</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {content}
+      </div>
+    );
+  };
+
+  const isTwinFirst =
+    dashboardLayout[0]?.id === 'twin_avatar' && Boolean(dashboardLayout[0]?.visible);
+  const remainingLayout = isTwinFirst ? dashboardLayout.slice(1) : dashboardLayout;
+  const remainingOffset = isTwinFirst ? 1 : 0;
+
   return (
     <div className="space-y-6 animate-fadeIn pb-12">
+      {/* بطاقة التوأم الرقمي في أعلى الصفحة */}
+      {isTwinFirst && renderLayoutEntry(dashboardLayout[0], 0)}
+
       {/* شريط أدوات إدارة وإضافة وتعديل مكونات اللوحة */}
       <div className="bg-slate-900/75 border border-slate-800/90 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs text-slate-300">
@@ -775,99 +877,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {onAddExtracted && <VoiceCommandPanel onAddExtracted={onAddExtracted} />}
 
       {/* Render Dashboard Components in User Order */}
-      {dashboardLayout.map((entry, idx) => {
-        if (!entry.visible) return null;
-        const content = renderSectionContent(entry);
-        if (!content) return null;
-
-        const customWidget = entry.isCustom
-          ? customWidgets.find((w) => w.id === entry.id)
-          : undefined;
-
-        if (!isLayoutEditMode) {
-          return <React.Fragment key={entry.id}>{content}</React.Fragment>;
-        }
-
-        return (
-          <div
-            key={entry.id}
-            className="rounded-2xl border-2 border-dashed border-cyan-500/40 p-2 bg-cyan-950/10 space-y-2 transition-all"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-slate-900/95 border border-slate-800 text-xs">
-              <div className="flex items-center gap-2 font-bold text-cyan-300">
-                <span>{getSectionTitle(entry)}</span>
-                {entry.isCustom && (
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    مخصص
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5">
-                {onMoveLayoutEntry && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={idx === 0}
-                      onClick={() => onMoveLayoutEntry(entry.id, 'up')}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer disabled:cursor-not-allowed"
-                      title="تحريك لأعلى"
-                    >
-                      <ArrowUp className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      disabled={idx === dashboardLayout.length - 1}
-                      onClick={() => onMoveLayoutEntry(entry.id, 'down')}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 cursor-pointer disabled:cursor-not-allowed"
-                      title="تحريك لأسفل"
-                    >
-                      <ArrowDown className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
-
-                {customWidget && (
-                  <button
-                    type="button"
-                    onClick={() => openCustomizerModal('create', customWidget)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 cursor-pointer"
-                  >
-                    <Edit3 className="w-3 h-3" />
-                    <span>تعديل</span>
-                  </button>
-                )}
-
-                {onToggleWidgetVisibility && (
-                  <button
-                    type="button"
-                    onClick={() => onToggleWidgetVisibility(entry.id)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-amber-950 text-amber-300 cursor-pointer"
-                    title="إخفاء من اللوحة"
-                  >
-                    <EyeOff className="w-3 h-3" />
-                    <span>إخفاء</span>
-                  </button>
-                )}
-
-                {customWidget && onDeleteCustomWidget && (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteCustomWidget(customWidget.id)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 cursor-pointer"
-                    title="حذف نهائي"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>حذف</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {content}
-          </div>
-        );
-      })}
+      {remainingLayout.map((entry, idx) => renderLayoutEntry(entry, idx + remainingOffset))}
 
       {/* Hidden components quick restore bar */}
       {hiddenEntries.length > 0 && onToggleWidgetVisibility && (

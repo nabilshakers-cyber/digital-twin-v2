@@ -9,6 +9,12 @@ export interface BuiltInSectionMeta {
 
 export const BUILTIN_DASHBOARD_SECTIONS: BuiltInSectionMeta[] = [
   {
+    id: 'twin_avatar',
+    label: 'بطاقة التوأم الرقمي والمزامنة',
+    description: 'ملخص حالة نسختك الرقمية واختصارات المحادثة والإحاطة الصباحية/المسائية.',
+    icon: '✨',
+  },
+  {
     id: 'mental_state',
     label: 'ملخص الحالة الذهنية والتشجيع المخصص',
     description: 'قراءة ذكية لنسبة الإنجاز والمهام المتأخرة مع رسالة تحفيزية مخصصة.',
@@ -25,12 +31,6 @@ export const BUILTIN_DASHBOARD_SECTIONS: BuiltInSectionMeta[] = [
     label: 'قوائم تطبيقات الهاتف السريعة',
     description: 'قوائم منظمة للدخول السريع إلى تطبيقات هاتفك (القرآن، الإنتاجية، التواصل، الأدوات).',
     icon: '📱',
-  },
-  {
-    id: 'twin_avatar',
-    label: 'بطاقة التوأم الرقمي والمزامنة',
-    description: 'ملخص حالة نسختك الرقمية واختصارات المحادثة والإحاطة الصباحية/المسائية.',
-    icon: '✨',
   },
   {
     id: 'burnout_banner',

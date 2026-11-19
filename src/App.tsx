@@ -100,7 +100,46 @@ const STORAGE_KEYS = {
   DASHBOARD_LAYOUT: 'digital_twin_dashboard_layout_v1',
   CUSTOM_WIDGETS: 'digital_twin_custom_widgets_v1',
   PHONE_APP_LISTS: 'digital_twin_phone_app_lists_v1',
+  TWIN_TOP_MIGRATED: 'digital_twin_twin_top_migrated_v1',
+  TWIN_TOP_CLOUD_MIGRATED: 'digital_twin_twin_top_cloud_migrated_v1',
 };
+
+function mergeAndPromoteTwinLayout(
+  layout: DashboardLayoutEntry[],
+  migrationKey: string
+): { merged: DashboardLayoutEntry[]; didPromote: boolean } {
+  const existingIds = new Set(layout.map((item) => item.id));
+  const missingBuiltins = DEFAULT_DASHBOARD_LAYOUT.filter((b) => !existingIds.has(b.id));
+  const combined = [...layout, ...missingBuiltins];
+
+  let alreadyMigrated = false;
+  try {
+    alreadyMigrated = localStorage.getItem(migrationKey) === '1';
+  } catch {
+    alreadyMigrated = false;
+  }
+
+  if (alreadyMigrated) {
+    return { merged: combined, didPromote: false };
+  }
+
+  try {
+    localStorage.setItem(migrationKey, '1');
+  } catch {
+    // ignore storage quota errors
+  }
+
+  const twinEntry = combined.find((item) => item.id === 'twin_avatar');
+  const promotedTwin: DashboardLayoutEntry = twinEntry
+    ? { ...twinEntry, visible: true }
+    : { id: 'twin_avatar', isCustom: false, visible: true };
+  const withoutTwin = combined.filter((item) => item.id !== 'twin_avatar');
+
+  return {
+    merged: [promotedTwin, ...withoutTwin],
+    didPromote: true,
+  };
+}
 
 export default function App() {
   // 1. Core State with Local Storage persistence
@@ -174,12 +213,17 @@ export default function App() {
   const [dashboardLayout, setDashboardLayout] = useState<DashboardLayoutEntry[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.DASHBOARD_LAYOUT);
-      if (!saved) return DEFAULT_DASHBOARD_LAYOUT;
+      if (!saved) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.TWIN_TOP_MIGRATED, '1');
+        } catch {
+          // ignore
+        }
+        return DEFAULT_DASHBOARD_LAYOUT;
+      }
       const parsed: DashboardLayoutEntry[] = JSON.parse(saved);
       if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_DASHBOARD_LAYOUT;
-      const existingIds = new Set(parsed.map((item) => item.id));
-      const missingBuiltins = DEFAULT_DASHBOARD_LAYOUT.filter((b) => !existingIds.has(b.id));
-      return [...parsed, ...missingBuiltins];
+      return mergeAndPromoteTwinLayout(parsed, STORAGE_KEYS.TWIN_TOP_MIGRATED).merged;
     } catch {
       return DEFAULT_DASHBOARD_LAYOUT;
     }
@@ -410,11 +454,14 @@ export default function App() {
           onWorkspace: (ws) => {
             if (ws.profile) setProfile(ws.profile);
             if (Array.isArray(ws.dashboardLayout) && ws.dashboardLayout.length > 0) {
-              const existingIds = new Set(ws.dashboardLayout.map((item) => item.id));
-              const missingBuiltins = DEFAULT_DASHBOARD_LAYOUT.filter(
-                (b) => !existingIds.has(b.id)
+              const { merged, didPromote } = mergeAndPromoteTwinLayout(
+                ws.dashboardLayout,
+                STORAGE_KEYS.TWIN_TOP_CLOUD_MIGRATED
               );
-              setDashboardLayout([...ws.dashboardLayout, ...missingBuiltins]);
+              setDashboardLayout(merged);
+              if (didPromote) {
+                void syncWorkspaceFields(authUser.uid, { dashboardLayout: merged });
+              }
             }
             if (ws.adhkarState) setAdhkarState(ws.adhkarState);
             if (typeof ws.quranNotificationsEnabled === 'boolean') {
