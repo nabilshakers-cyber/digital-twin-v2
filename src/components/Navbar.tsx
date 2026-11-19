@@ -143,9 +143,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-slate-100 flex items-center gap-1.5">
+                <h1 className="text-base font-bold text-slate-100 flex items-center gap-1.5 whitespace-nowrap">
                   نسخة {profile.name || 'الرقمية'}
-                  <span className="text-[11px] font-medium bg-cyan-950/80 text-cyan-400 border border-cyan-800/50 px-2 py-0.5 rounded-full">
+                  <span className="hidden xl:inline-flex text-[11px] font-medium bg-cyan-950/80 text-cyan-400 border border-cyan-800/50 px-2 py-0.5 rounded-full">
                     توأم ذكي متصل
                   </span>
                 </h1>
@@ -156,99 +156,66 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-sm">
+          {/* Navigation Tabs + Notifications & Settings */}
+          <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-xs lg:text-sm">
             <button
               id="nav-tab-dashboard"
               onClick={() => setCurrentTab('dashboard')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                 currentTab === 'dashboard'
                   ? 'bg-cyan-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <LayoutDashboard className="w-4 h-4" />
+              <LayoutDashboard className="w-4 h-4 shrink-0" />
               <span>الرئيسية</span>
             </button>
 
             <button
               id="nav-tab-tasks"
               onClick={() => setCurrentTab('tasks')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                 currentTab === 'tasks'
                   ? 'bg-cyan-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <CheckSquare className="w-4 h-4" />
+              <CheckSquare className="w-4 h-4 shrink-0" />
               <span>المهام</span>
             </button>
 
             <button
               id="nav-tab-schedule"
               onClick={() => setCurrentTab('schedule')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                 currentTab === 'schedule'
                   ? 'bg-cyan-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <Calendar className="w-4 h-4" />
+              <Calendar className="w-4 h-4 shrink-0" />
               <span>الجدول اليومي</span>
             </button>
 
             <button
               id="nav-tab-focus"
               onClick={() => setCurrentTab('focus')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                 currentTab === 'focus'
                   ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              <Flame className="w-4 h-4" />
+              <Flame className="w-4 h-4 shrink-0" />
               <span>التركيز العميق</span>
             </button>
-          </nav>
 
-          {/* Quick Action buttons */}
-          <div className="flex items-center gap-2">
-            
-            {/* Quick AI Add */}
-            <button
-              id="btn-quick-add-ai"
-              onClick={onOpenQuickAdd}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold shadow-md shadow-cyan-600/20 transition-all cursor-pointer"
-              title="إضافة مهام ومواعيد بالذكاء الاصطناعي"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">إدخال ذكي</span>
-              <Plus className="w-3.5 h-3.5 sm:hidden" />
-            </button>
-
-            {/* Digital AI Assistant button */}
-            <button
-              id="btn-twin-chat"
-              onClick={onOpenChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900/90 text-cyan-200 border border-cyan-500/40 text-xs font-bold shadow-sm shadow-cyan-500/10 transition-all cursor-pointer"
-              title="فتح المساعد الرقمي AI"
-            >
-              <Bot className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">المساعد الرقمي AI</span>
-            </button>
-
-            {/* Daily briefing trigger */}
-            <button
-              id="btn-daily-briefing"
-              onClick={() => onOpenBriefing('morning')}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-amber-300 border border-slate-700/80 transition-all cursor-pointer"
-              title="الموجز الصباحي والتحليلي"
-            >
-              <Sparkles className="w-4 h-4" />
-            </button>
+            <div className="h-5 w-px bg-slate-800 mx-0.5 shrink-0" aria-hidden="true" />
 
             {/* Smart Notifications & Reminders Center */}
             <NotificationCenter
+              variant="nav-tab"
+              buttonId="btn-notifications-center"
               reminders={reminders}
               pushPermission={pushPermission}
               pushEnabled={pushEnabled}
@@ -270,6 +237,55 @@ export const Navbar: React.FC<NavbarProps> = ({
               onRebalanceWithTwin={onRebalanceWithTwin}
               onCheckTomorrowEnergy={onCheckTomorrowEnergy}
             />
+
+            {/* Profile / Settings */}
+            <button
+              id="btn-twin-settings"
+              type="button"
+              onClick={onOpenProfile}
+              className="flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-all whitespace-nowrap cursor-pointer"
+              title="الإعدادات والمكونات المخصصة"
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>الإعدادات</span>
+            </button>
+          </nav>
+
+          {/* Quick Action buttons */}
+          <div className="flex items-center gap-2">
+            
+            {/* Quick AI Add */}
+            <button
+              id="btn-quick-add-ai"
+              onClick={onOpenQuickAdd}
+              className="flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-semibold shadow-md shadow-cyan-600/20 transition-all whitespace-nowrap cursor-pointer"
+              title="إضافة مهام ومواعيد بالذكاء الاصطناعي"
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline md:hidden xl:inline">إدخال ذكي</span>
+              <Plus className="w-3.5 h-3.5 sm:hidden" />
+            </button>
+
+            {/* Digital AI Assistant button */}
+            <button
+              id="btn-twin-chat"
+              onClick={onOpenChat}
+              className="flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl bg-indigo-950/80 hover:bg-indigo-900/90 text-cyan-200 border border-cyan-500/40 text-xs font-bold shadow-sm shadow-cyan-500/10 transition-all whitespace-nowrap cursor-pointer"
+              title="فتح المساعد الرقمي AI"
+            >
+              <Bot className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span className="hidden sm:inline md:hidden xl:inline">المساعد الرقمي AI</span>
+            </button>
+
+            {/* Daily briefing trigger */}
+            <button
+              id="btn-daily-briefing"
+              onClick={() => onOpenBriefing('morning')}
+              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-amber-300 border border-slate-700/80 transition-all cursor-pointer"
+              title="الموجز الصباحي والتحليلي"
+            >
+              <Sparkles className="w-4 h-4" />
+            </button>
 
             {/* In-App Auth & Sync Badge */}
             {authUser ? (
@@ -308,23 +324,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                 title="تسجيل الدخول محلياً داخل التطبيق"
               >
-                <LogIn className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">تسجيل الدخول</span>
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline md:hidden xl:inline">تسجيل الدخول</span>
               </button>
             )}
 
             {/* Android / PWA Install Action */}
             <PWAInstallButton />
-
-            {/* Profile / Settings */}
-            <button
-              id="btn-twin-settings"
-              onClick={onOpenProfile}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700/80 transition-all cursor-pointer"
-              title="الإعدادات والمكونات المخصصة"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </div>
@@ -332,12 +338,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Android-Style Fixed Bottom Navigation Bar (Mobile) */}
       <nav
         aria-label="التنقل السفلي"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0b1120]/95 backdrop-blur-lg border-t border-slate-800/90 px-2 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,0,0,0.45)]"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0b1120]/95 backdrop-blur-lg border-t border-slate-800/90 px-1.5 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,0,0,0.45)]"
       >
-        <div className="flex items-center justify-around text-[11px]">
+        <div className="flex items-center justify-around text-[10px] sm:text-[11px]">
           <button
             onClick={() => setCurrentTab('dashboard')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all ${
+            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
               currentTab === 'dashboard'
                 ? 'text-cyan-300 font-bold bg-cyan-500/15'
                 : 'text-slate-400'
@@ -349,7 +355,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={() => setCurrentTab('tasks')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all ${
+            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
               currentTab === 'tasks'
                 ? 'text-cyan-300 font-bold bg-cyan-500/15'
                 : 'text-slate-400'
@@ -361,7 +367,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={() => setCurrentTab('schedule')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all ${
+            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
               currentTab === 'schedule'
                 ? 'text-cyan-300 font-bold bg-cyan-500/15'
                 : 'text-slate-400'
@@ -373,7 +379,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={() => setCurrentTab('focus')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition-all ${
+            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
               currentTab === 'focus'
                 ? 'text-amber-300 font-bold bg-amber-500/15'
                 : 'text-slate-400'
@@ -381,6 +387,42 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Flame className="w-5 h-5" />
             <span>التركيز</span>
+          </button>
+
+          <NotificationCenter
+            variant="mobile-nav"
+            buttonId="btn-notifications-center-mobile"
+            reminders={reminders}
+            pushPermission={pushPermission}
+            pushEnabled={pushEnabled}
+            soundEnabled={soundEnabled}
+            onEnablePush={onEnablePush}
+            onTogglePushEnabled={onTogglePushEnabled}
+            onToggleSound={onToggleSound}
+            onTestAlert={onTestAlert}
+            onCompleteReminder={onCompleteReminder}
+            onSnoozeReminder={onSnoozeReminder}
+            onDismissReminder={onDismissReminder}
+            onStartFocus={onStartFocus}
+            isDndActive={isDndActive}
+            autoDndEnabled={autoDndEnabled}
+            manualDnd={manualDnd}
+            onToggleAutoDnd={onToggleAutoDnd}
+            onToggleManualDnd={onToggleManualDnd}
+            onReviewTomorrowSchedule={onReviewTomorrowSchedule}
+            onRebalanceWithTwin={onRebalanceWithTwin}
+            onCheckTomorrowEnergy={onCheckTomorrowEnergy}
+          />
+
+          <button
+            id="btn-twin-settings-mobile"
+            type="button"
+            onClick={onOpenProfile}
+            className="flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+            title="الإعدادات والمكونات المخصصة"
+          >
+            <Settings className="w-5 h-5" />
+            <span>الإعدادات</span>
           </button>
         </div>
       </nav>

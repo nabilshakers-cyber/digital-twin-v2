@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { DailyBriefing, DigitalTwinProfile, Task, TimeBlock } from '../types';
 import { generateBriefingWithAI } from '../utils/api';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface DailyBriefingModalProps {
   isOpen: boolean;
@@ -85,19 +86,21 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
+  useModalScrollLock('briefing-modal', isOpen);
+
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden bg-gradient-to-b from-slate-900 via-[#0c1222] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        className="app-modal-panel max-w-xl bg-gradient-to-b from-slate-900 via-[#0c1222] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky Header with Always-Visible Close (X) */}
-        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${
               type === 'morning' 
@@ -120,14 +123,14 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+        <div className="app-modal-body p-4 sm:p-6 space-y-4">
           {/* Loading */}
           {isLoading && (
             <div className="py-14 text-center space-y-3">

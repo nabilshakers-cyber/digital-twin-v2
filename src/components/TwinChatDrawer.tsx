@@ -31,6 +31,7 @@ import {
   TimeBlock,
 } from '../types';
 import { askDigitalAssistant, processVoiceNoteWithAI } from '../utils/api';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface TwinChatDrawerProps {
   isOpen: boolean;
@@ -423,6 +424,8 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
     return `${m}:${s}`;
   };
 
+  useModalScrollLock('chat-drawer', isOpen);
+
   if (!isOpen) return null;
 
   const quickPrompts = [
@@ -435,16 +438,16 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center sm:justify-end p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay sm:justify-end bg-slate-950/80 backdrop-blur-sm sm:p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] h-[85vh] bg-slate-900 border border-slate-800 rounded-3xl flex flex-col overflow-hidden shadow-2xl relative"
+        className="app-modal-panel max-w-lg h-[min(640px,85dvh)] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         
         {/* Sticky Header with Always-Visible Close (X) */}
-        <div className="shrink-0 sticky top-0 z-20 p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/95 backdrop-blur-md">
+        <div className="app-modal-header p-4 border-b border-slate-800 flex items-center justify-between gap-2 bg-slate-950/95 backdrop-blur-md">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-emerald-500 p-0.5 shadow-md shadow-cyan-500/20 shrink-0">
               <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
@@ -477,7 +480,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
               type="button"
               onClick={onClose}
               aria-label="إغلاق"
-              className="p-2 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700 transition-colors cursor-pointer"
+              className="app-modal-close p-2 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700 transition-colors cursor-pointer"
               title="إغلاق"
             >
               <X className="w-5 h-5" />
@@ -499,7 +502,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
         </div>
 
         {/* Message Feed */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
+        <div className="app-modal-body p-4 space-y-4">
           {messages.map((msg) => {
             const isTwin = msg.role === 'twin';
 

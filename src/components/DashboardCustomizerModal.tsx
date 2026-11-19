@@ -19,6 +19,7 @@ import {
   DashboardLayoutEntry,
 } from '../types';
 import { BUILTIN_DASHBOARD_SECTIONS } from '../data/dashboardDefaults';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface DashboardCustomizerModalProps {
   isOpen: boolean;
@@ -100,6 +101,8 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
       setDraftItems([{ id: `draft-${Date.now()}`, text: '', done: false, url: '' }]);
     }
   }, [isOpen, editingWidget, initialMode]);
+
+  useModalScrollLock('customizer-modal', isOpen);
 
   if (!isOpen) return null;
 
@@ -190,15 +193,15 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        className="app-modal-panel max-w-3xl bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky Header */}
-        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900">
+        <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
               <LayoutGrid className="w-5 h-5" />
@@ -217,7 +220,7 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 cursor-pointer"
+            className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -254,7 +257,7 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
+        <div className="app-modal-body p-4 sm:p-5">
           {activeTab === 'manage' ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">

@@ -282,6 +282,70 @@ export async function generateContextualBriefingWithAI(params: {
   );
 }
 
+const TASK_CLASSIFICATION_CACHE_KEY = 'digital_twin_task_classify_cache_v1';
+const TASK_CLASSIFICATION_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
+const TASK_CLASSIFICATION_CACHE_MAX_ENTRIES = 500;
+
+interface CachedTaskClassification {
+  category: TaskCategory;
+  priority: Priority;
+  reason?: string;
+  cachedAt: number;
+}
+
+const normalizeTaskTitleKey = (title: string): string =>
+  title.trim().replace(/\s+/g, ' ').toLowerCase();
+
+function readTaskClassificationCache(): Record<string, CachedTaskClassification> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(TASK_CLASSIFICATION_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const now = Date.now();
+    const cleaned: Record<string, CachedTaskClassification> = {};
+    for (const [key, entry] of Object.entries(parsed)) {
+      const item = entry as Partial<CachedTaskClassification> | null;
+      if (
+        item &&
+        typeof item.category === 'string' &&
+        typeof item.priority === 'string' &&
+        typeof item.cachedAt === 'number' &&
+        now - item.cachedAt <= TASK_CLASSIFICATION_CACHE_TTL_MS
+      ) {
+        cleaned[key] = {
+          category: item.category as TaskCategory,
+          priority: item.priority as Priority,
+          reason: typeof item.reason === 'string' ? item.reason : undefined,
+          cachedAt: item.cachedAt,
+        };
+      }
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function writeTaskClassificationCache(
+  cache: Record<string, CachedTaskClassification>
+): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const entries = Object.entries(cache)
+      .sort((a, b) => b[1].cachedAt - a[1].cachedAt)
+      .slice(0, TASK_CLASSIFICATION_CACHE_MAX_ENTRIES);
+    localStorage.setItem(
+      TASK_CLASSIFICATION_CACHE_KEY,
+      JSON.stringify(Object.fromEntries(entries))
+    );
+  } catch {
+    // Ignore storage quota or private mode errors
+  }
+}
+
 export async function classifyTasksWithAI(params: {
   tasks: Task[];
   profile?: DigitalTwinProfile;
@@ -294,9 +358,122 @@ export async function classifyTasksWithAI(params: {
   }[];
   summary: string;
 }> {
-  return postJson(
+  const inputTasks = Array.isArray(params.tasks) ? params.tasks : [];
+  if (inputTasks.length === 0) {
+    return { classifications: [], summary: 'لا توجد مهام غير مصنفة.' };
+  }
+
+  const cache = readTaskClassificationCache();
+  const cachedById = new Map<
+    string,
+    { id: string; category: TaskCategory; priority: Priority; reason?: string }
+  >();
+  const seenUncachedTitles = new Set<string>();
+  const uniqueTasksToRequest: Task[] = [];
+
+  for (const task of inputTasks) {
+    const titleKey = normalizeTaskTitleKey(task.title || '');
+    const cached = titleKey ? cache[titleKey] : undefined;
+    if (cached) {
+      cachedById.set(task.id, {
+        id: task.id,
+        category: cached.category,
+        priority: cached.priority,
+        reason: cached.reason,
+      });
+    } else {
+      if (!titleKey || !seenUncachedTitles.has(titleKey)) {
+        if (titleKey) seenUncachedTitles.add(titleKey);
+        uniqueTasksToRequest.push(task);
+      }
+    }
+  }
+
+  if (uniqueTasksToRequest.length === 0) {
+    const classifications = inputTasks
+      .map((t) => cachedById.get(t.id))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c));
+    return {
+      classifications,
+      summary: `تم تصنيف ${classifications.length} مهمة من الذاكرة المؤقتة مباشرة دون الحاجة لطلبات API جديدة.`,
+    };
+  }
+
+  const apiResult = await postJson<{
+    classifications: {
+      id: string;
+      category: TaskCategory;
+      priority: Priority;
+      reason?: string;
+    }[];
+    summary: string;
+  }>(
     '/api/twin/classify-tasks',
-    params,
+    {
+      ...params,
+      tasks: uniqueTasksToRequest,
+    },
     'فشل التصنيف التلقائي للمهام عبر Gemini'
   );
+
+  const requestedById = new Map(uniqueTasksToRequest.map((t) => [t.id, t]));
+  const apiClassificationsById = new Map<
+    string,
+    { id: string; category: TaskCategory; priority: Priority; reason?: string }
+  >();
+  const now = Date.now();
+
+  for (const item of apiResult.classifications || []) {
+    apiClassificationsById.set(item.id, item);
+    const matchedTask = requestedById.get(item.id);
+    const titleKey = matchedTask ? normalizeTaskTitleKey(matchedTask.title || '') : '';
+    if (titleKey) {
+      cache[titleKey] = {
+        category: item.category,
+        priority: item.priority,
+        reason: item.reason,
+        cachedAt: now,
+      };
+    }
+  }
+
+  writeTaskClassificationCache(cache);
+
+  const mergedClassifications: {
+    id: string;
+    category: TaskCategory;
+    priority: Priority;
+    reason?: string;
+  }[] = [];
+
+  for (const task of inputTasks) {
+    const fromCache = cachedById.get(task.id);
+    if (fromCache) {
+      mergedClassifications.push(fromCache);
+      continue;
+    }
+    const fromApiById = apiClassificationsById.get(task.id);
+    if (fromApiById) {
+      mergedClassifications.push(fromApiById);
+      continue;
+    }
+    const titleKey = normalizeTaskTitleKey(task.title || '');
+    const fromUpdatedCache = titleKey ? cache[titleKey] : undefined;
+    if (fromUpdatedCache) {
+      mergedClassifications.push({
+        id: task.id,
+        category: fromUpdatedCache.category,
+        priority: fromUpdatedCache.priority,
+        reason: fromUpdatedCache.reason,
+      });
+    }
+  }
+
+  return {
+    classifications: mergedClassifications,
+    summary:
+      cachedById.size > 0
+        ? `${apiResult.summary} (تم استرجاع ${cachedById.size} مهام من الذاكرة المؤقتة)`
+        : apiResult.summary,
+  };
 }

@@ -60,6 +60,7 @@ import {
   INITIAL_PHONE_APP_LISTS,
 } from '../data/dashboardDefaults';
 import { getDualDateInfo } from '../utils/calendarUtils';
+import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
 
 interface DashboardViewProps {
   profile: DigitalTwinProfile;
@@ -165,6 +166,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     null
   );
 
+  useModalCloseListener('customizer-modal', () => {
+    setCustomizerOpen(false);
+    setEditingCustomWidget(null);
+  });
+
+  const openCustomizerModal = (
+    mode: 'create' | 'manage',
+    widget: CustomDashboardWidget | null = null
+  ) => {
+    broadcastCloseAllModals('customizer-modal');
+    setEditingCustomWidget(widget);
+    setCustomizerMode(mode);
+    setCustomizerOpen(true);
+  };
+
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const activeTopTasks = tasks.filter((t) => t.isTopPriority || t.priority === 'high');
   const burnoutStatus = evaluateCognitiveLoad(tasks);
@@ -202,11 +218,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <CustomDashboardWidgetCard
           widget={widget}
           onUpdateWidget={onUpdateCustomWidget}
-          onEditWidget={(w) => {
-            setEditingCustomWidget(w);
-            setCustomizerMode('create');
-            setCustomizerOpen(true);
-          }}
+          onEditWidget={(w) => openCustomizerModal('create', w)}
           onDeleteWidget={onDeleteCustomWidget}
         />
       );
@@ -723,11 +735,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               id="btn-add-custom-component"
-              onClick={() => {
-                setEditingCustomWidget(null);
-                setCustomizerMode('create');
-                setCustomizerOpen(true);
-              }}
+              onClick={() => openCustomizerModal('create', null)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-bold shadow-md cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -739,11 +747,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               id="btn-manage-dashboard-components"
-              onClick={() => {
-                setEditingCustomWidget(null);
-                setCustomizerMode('manage');
-                setCustomizerOpen(true);
-              }}
+              onClick={() => openCustomizerModal('manage', null)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />
@@ -826,11 +830,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {customWidget && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditingCustomWidget(customWidget);
-                      setCustomizerMode('create');
-                      setCustomizerOpen(true);
-                    }}
+                    onClick={() => openCustomizerModal('create', customWidget)}
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 cursor-pointer"
                   >
                     <Edit3 className="w-3 h-3" />

@@ -36,6 +36,7 @@ import { SmartReminderToasts } from './components/SmartReminderToasts';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { classifyTasksWithAI, optimizeScheduleWithAI } from './utils/api';
 import { soundEngine } from './utils/audioSynth';
+import { broadcastCloseAllModals, useModalCloseListener } from './utils/modalCoordinator';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   auth,
@@ -478,7 +479,7 @@ export default function App() {
   };
 
   // Single-modal mutex helpers so mobile overlays never stack or overlap
-  const closeAllModals = () => {
+  const closeAllModals = (broadcast = true) => {
     setIsChatOpen(false);
     setIsQuickAddOpen(false);
     setIsProfileOpen(false);
@@ -487,7 +488,14 @@ export default function App() {
     setIsBriefingOpen(false);
     setIsContextualBriefingOpen(false);
     setCurrentTab((prev) => (prev === 'focus' ? 'dashboard' : prev));
+    if (broadcast) {
+      broadcastCloseAllModals('app');
+    }
   };
+
+  useModalCloseListener('app', () => {
+    closeAllModals(false);
+  });
 
   const openChatModal = (prompt?: string) => {
     closeAllModals();

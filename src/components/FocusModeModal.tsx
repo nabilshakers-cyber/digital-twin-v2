@@ -29,6 +29,7 @@ import {
   QURAN_SURAH_PRESETS,
   type QuranReciterPreset,
 } from '../utils/audioSynth';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 import confetti from 'canvas-confetti';
 
 interface FocusModeModalProps {
@@ -230,20 +231,22 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
     return twinFocusQuotes[Math.floor(Math.random() * twinFocusQuotes.length)];
   }, [isOpen, profile.name]);
 
+  useModalScrollLock('focus-modal', isOpen);
+
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay bg-slate-950/95 backdrop-blur-xl sm:p-4 animate-fadeIn"
       onClick={handleClose}
     >
       <div
-        className="w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        className="app-modal-panel max-w-2xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         
         {/* Sticky Top Action Bar: Return to Dashboard & Close (X) */}
-        <div className="shrink-0 sticky top-0 z-20 px-4 sm:px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div className="app-modal-header px-4 sm:px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
           <button
             type="button"
             id="btn-focus-return-dashboard"
@@ -260,7 +263,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
             type="button"
             onClick={handleClose}
             aria-label="إغلاق غرفة التركيز"
-            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
             title="إغلاق غرفة التركيز"
           >
             <X className="w-5 h-5" />
@@ -268,7 +271,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+        <div className="app-modal-body p-4 sm:p-6">
 
         {/* Header with Twin presence */}
         <div className="text-center space-y-2">

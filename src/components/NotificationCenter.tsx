@@ -21,6 +21,7 @@ import {
 import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
 import { Task } from '../types';
+import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
 
 interface NotificationCenterProps {
   reminders: SmartReminder[];
@@ -43,6 +44,8 @@ interface NotificationCenterProps {
   onReviewTomorrowSchedule?: () => void;
   onRebalanceWithTwin?: (analysis: TomorrowEnergyAnalysis) => void;
   onCheckTomorrowEnergy?: () => void;
+  variant?: 'icon' | 'nav-tab' | 'mobile-nav';
+  buttonId?: string;
 }
 
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({
@@ -66,6 +69,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   onReviewTomorrowSchedule,
   onRebalanceWithTwin,
   onCheckTomorrowEnergy,
+  variant = 'icon',
+  buttonId = 'btn-notifications-center',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +78,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   const overdueCount = reminders.filter((r) => r.urgency === 'overdue').length;
   const dueSoonCount = reminders.filter((r) => r.urgency === 'due_soon').length;
   const totalCount = reminders.length;
+
+  useModalCloseListener(buttonId, () => setIsOpen(false));
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -86,14 +93,34 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  return (
-    <div ref={containerRef} className="relative">
-      {/* Bell Trigger Button */}
-      <button
-        id="btn-notifications-center"
-        type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
-        className={`relative p-2 rounded-xl border transition-all cursor-pointer ${
+  const iconClass = variant === 'mobile-nav' ? 'w-5 h-5 shrink-0' : 'w-4 h-4 shrink-0';
+
+  const triggerClassName =
+    variant === 'nav-tab'
+      ? `relative flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all cursor-pointer whitespace-nowrap ${
+          isOpen
+            ? 'bg-cyan-600 text-white shadow-sm'
+            : isDndActive
+            ? 'text-indigo-300 hover:bg-indigo-950/60'
+            : overdueCount > 0
+            ? 'text-rose-300 hover:bg-rose-950/50'
+            : totalCount > 0
+            ? 'text-amber-300 hover:bg-amber-950/40'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+        }`
+      : variant === 'mobile-nav'
+      ? `relative flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all cursor-pointer ${
+          isOpen
+            ? 'text-cyan-300 font-bold bg-cyan-500/15'
+            : isDndActive
+            ? 'text-indigo-300'
+            : overdueCount > 0
+            ? 'text-rose-300'
+            : totalCount > 0
+            ? 'text-amber-300'
+            : 'text-slate-400'
+        }`
+      : `relative p-2 rounded-xl border transition-all cursor-pointer ${
           isDndActive
             ? 'bg-indigo-950/70 hover:bg-indigo-900/70 text-indigo-300 border-indigo-700/70'
             : overdueCount > 0
@@ -101,7 +128,33 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             : totalCount > 0
             ? 'bg-amber-950/50 hover:bg-amber-900/60 text-amber-300 border-amber-700/60'
             : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700/80'
-        }`}
+        }`;
+
+  const dropdownPositionClass =
+    variant === 'mobile-nav'
+      ? 'fixed bottom-20 left-1/2 -translate-x-1/2 w-[calc(100vw-1.5rem)] max-w-[390px] max-h-[min(75vh,75dvh)]'
+      : variant === 'nav-tab'
+      ? 'absolute left-1/2 -translate-x-1/2 mt-2.5 w-[340px] sm:w-[390px] max-w-[calc(100vw-1.5rem)] max-h-[min(85vh,85dvh)]'
+      : 'absolute left-0 mt-2.5 w-[340px] sm:w-[390px] max-w-[calc(100vw-1.5rem)] max-h-[min(85vh,85dvh)]';
+
+  const handleToggleOpen = () => {
+    setIsOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        broadcastCloseAllModals(buttonId);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Bell Trigger Button */}
+      <button
+        id={buttonId}
+        type="button"
+        onClick={handleToggleOpen}
+        className={triggerClassName}
         title={
           isDndActive
             ? 'وضع عدم الإزعاج مفعل — التنبيهات مخفية'
@@ -110,20 +163,40 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         aria-label="مركز التنبيهات والتذكيرات الذكية"
       >
         {isDndActive ? (
-          <BellOff className="w-4 h-4" />
+          <BellOff className={iconClass} />
         ) : overdueCount > 0 ? (
-          <BellRing className="w-4 h-4 animate-bounce" />
+          <BellRing className={`${iconClass} animate-bounce`} />
         ) : (
-          <Bell className="w-4 h-4" />
+          <Bell className={iconClass} />
+        )}
+
+        {(variant === 'nav-tab' || variant === 'mobile-nav') && (
+          <span>الإشعارات</span>
         )}
 
         {!isDndActive && totalCount > 0 && (
           <span
-            className={`absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center shadow ${
-              overdueCount > 0
-                ? 'bg-rose-500 text-white'
-                : 'bg-amber-400 text-slate-950'
-            }`}
+            className={
+              variant === 'nav-tab'
+                ? `min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-black flex items-center justify-center shadow ${
+                    overdueCount > 0
+                      ? 'bg-rose-500 text-white'
+                      : isOpen
+                      ? 'bg-slate-950/90 text-cyan-300'
+                      : 'bg-amber-400 text-slate-950'
+                  }`
+                : variant === 'mobile-nav'
+                ? `absolute top-0.5 right-0.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow ${
+                    overdueCount > 0
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-amber-400 text-slate-950'
+                  }`
+                : `absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center shadow ${
+                    overdueCount > 0
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-amber-400 text-slate-950'
+                  }`
+            }
           >
             {totalCount}
           </span>
@@ -132,16 +205,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute left-0 mt-2.5 w-[340px] sm:w-[390px] max-w-[calc(100vw-1.5rem)] max-h-[85vh] flex flex-col bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
+        <div className={`${dropdownPositionClass} flex flex-col bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn`}>
           {/* Header */}
-          <div className="shrink-0 sticky top-0 z-20 p-3.5 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <BellRing className="w-4 h-4 text-cyan-400" />
-              <h4 className="text-xs font-bold text-slate-100">
+          <div className="app-modal-header p-3.5 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <BellRing className="w-4 h-4 text-cyan-400 shrink-0" />
+              <h4 className="text-xs font-bold text-slate-100 truncate">
                 التنبيهات والتذكيرات الذكية
               </h4>
               {totalCount > 0 && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold shrink-0">
                   {overdueCount > 0 && `${overdueCount} متأخر`}
                   {overdueCount > 0 && dueSoonCount > 0 && ' • '}
                   {dueSoonCount > 0 && `${dueSoonCount} قريب`}
@@ -149,7 +222,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
                 onClick={onToggleSound}
@@ -166,7 +239,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+                aria-label="إغلاق"
+                className="app-modal-close p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>

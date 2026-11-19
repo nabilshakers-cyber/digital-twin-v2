@@ -7,6 +7,7 @@ import {
   loadInitialAdhkarState,
 } from '../utils/reminderEngine';
 import { AdhkarInteractiveModal } from './AdhkarInteractiveModal';
+import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
 
 interface Props {
   initialItems: QuranRoutineItem[];
@@ -45,6 +46,13 @@ export const QuranTrackerView: React.FC<Props> = ({
   const [streak, setStreak] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeAdhkarModal, setActiveAdhkarModal] = useState<'morning' | 'evening' | null>(null);
+
+  useModalCloseListener('adhkar-modal', () => setActiveAdhkarModal(null));
+
+  const openAdhkarModal = (period: 'morning' | 'evening') => {
+    broadcastCloseAllModals('adhkar-modal');
+    setActiveAdhkarModal(period);
+  };
 
   const notificationsEnabled =
     controlledNotifications !== undefined ? controlledNotifications : localNotificationsEnabled;
@@ -528,11 +536,11 @@ export const QuranTrackerView: React.FC<Props> = ({
             role="button"
             tabIndex={0}
             id="btn-adhkar-morning"
-            onClick={() => setActiveAdhkarModal('morning')}
+            onClick={() => openAdhkarModal('morning')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                setActiveAdhkarModal('morning');
+                openAdhkarModal('morning');
               }
             }}
             className={`group relative overflow-hidden p-4 rounded-2xl border text-right transition-all duration-500 cursor-pointer flex items-center justify-between gap-3 ${
@@ -608,11 +616,11 @@ export const QuranTrackerView: React.FC<Props> = ({
             role="button"
             tabIndex={0}
             id="btn-adhkar-evening"
-            onClick={() => setActiveAdhkarModal('evening')}
+            onClick={() => openAdhkarModal('evening')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                setActiveAdhkarModal('evening');
+                openAdhkarModal('evening');
               }
             }}
             className={`group relative overflow-hidden p-4 rounded-2xl border text-right transition-all duration-500 cursor-pointer flex items-center justify-between gap-3 ${

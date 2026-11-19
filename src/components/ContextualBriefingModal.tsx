@@ -19,6 +19,7 @@ import {
   ContextualBriefing,
 } from '../types';
 import { generateContextualBriefingWithAI } from '../utils/api';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface ContextualBriefingModalProps {
   isOpen: boolean;
@@ -85,19 +86,21 @@ export const ContextualBriefingModal: React.FC<ContextualBriefingModalProps> = (
     }
   };
 
+  useModalScrollLock('contextual-briefing-modal', Boolean(isOpen && task));
+
   if (!isOpen || !task) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden bg-gradient-to-b from-slate-900 via-[#0a1020] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        className="app-modal-panel max-w-xl bg-gradient-to-b from-slate-900 via-[#0a1020] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky Header with Always-Visible Close (X) */}
-        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 shrink-0">
               <FileText className="w-5 h-5" />
@@ -116,14 +119,14 @@ export const ContextualBriefingModal: React.FC<ContextualBriefingModalProps> = (
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+        <div className="app-modal-body p-4 sm:p-5 space-y-4">
           {/* Target Task Card */}
           <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 flex items-start justify-between gap-3">
             <div>

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Task, DigitalTwinProfile } from '../types';
 import { breakdownTaskWithAI } from '../utils/api';
+import { useModalScrollLock } from '../utils/modalCoordinator';
 import confetti from 'canvas-confetti';
 
 interface TaskBreakdownModalProps {
@@ -82,19 +83,21 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
     onClose();
   };
 
+  useModalScrollLock('breakdown-modal', Boolean(isOpen && task));
+
   if (!isOpen || !task) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden bg-gradient-to-b from-slate-900 via-[#0a0f1e] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        className="app-modal-panel max-w-xl bg-gradient-to-b from-slate-900 via-[#0a0f1e] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Sticky Header with Always-Visible Close (X) */}
-        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-cyan-300 shadow-md shadow-cyan-500/20 shrink-0">
               <Split className="w-5 h-5" />
@@ -113,14 +116,14 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="إغلاق"
-            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+        <div className="app-modal-body p-4 sm:p-5 space-y-4">
           {/* Task Title Banner */}
           <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800">
             <span className="text-[11px] text-cyan-400 font-bold block mb-1">المهمة المستهدفة:</span>

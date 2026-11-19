@@ -1,5 +1,5 @@
 import express from "express";
-import cors from "cors";
+import cors from 'cors';
 import http from "http";
 import path from "path";
 import dotenv from "dotenv";
@@ -11,8 +11,16 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
-app.options("*", cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.use(express.json({ limit: "15mb" }));
 

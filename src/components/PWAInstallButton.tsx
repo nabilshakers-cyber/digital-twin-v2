@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { Smartphone, Download, CheckCircle2, X, Share, Terminal, ShieldCheck } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import {
+  broadcastCloseAllModals,
+  useModalCloseListener,
+  useModalScrollLock,
+} from '../utils/modalCoordinator';
 
 interface PWAInstallButtonProps {
   compact?: boolean;
@@ -10,14 +15,22 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
   const { canNativeInstall, isInstalled, isIOS, promptInstall } = usePWAInstall();
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
+  useModalCloseListener('pwa-guide-modal', () => setIsGuideOpen(false));
+  useModalScrollLock('pwa-guide-modal', isGuideOpen);
+
+  const openGuideModal = () => {
+    broadcastCloseAllModals('pwa-guide-modal');
+    setIsGuideOpen(true);
+  };
+
   const handleClick = async () => {
     if (canNativeInstall) {
       const outcome = await promptInstall();
       if (outcome === 'unavailable') {
-        setIsGuideOpen(true);
+        openGuideModal();
       }
     } else {
-      setIsGuideOpen(true);
+      openGuideModal();
     }
   };
 
@@ -53,15 +66,15 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
 
       {isGuideOpen && (
         <div
-          className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden"
+          className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
           onClick={() => setIsGuideOpen(false)}
         >
           <div
-            className="w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl text-right"
+            className="app-modal-panel max-w-lg bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl text-right"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Sticky Header with Always-Visible Close (X) */}
-            <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+            <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-slate-950 shrink-0">
                   <Smartphone className="w-5 h-5" />
@@ -79,7 +92,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
               <button
                 type="button"
                 onClick={() => setIsGuideOpen(false)}
-                className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 cursor-pointer"
+                className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 cursor-pointer"
                 aria-label="إغلاق"
               >
                 <X className="w-5 h-5" />
@@ -87,7 +100,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
             </div>
 
             {/* Scrollable Body */}
-            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+            <div className="app-modal-body p-4 sm:p-5 space-y-4">
               {isIOS ? (
                 <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2 text-xs text-slate-300">
                   <p className="font-bold text-cyan-300 flex items-center gap-1.5">
