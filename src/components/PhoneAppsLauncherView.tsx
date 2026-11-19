@@ -12,6 +12,12 @@ import {
 } from 'lucide-react';
 import { CustomWidgetColor, PhoneAppList, PhoneAppShortcut } from '../types';
 import { POPULAR_PHONE_APP_PRESETS } from '../data/dashboardDefaults';
+import {
+  getDefaultFallbackUrl,
+  isHttpLink,
+  normalizeDeepLink,
+  openNativeApp,
+} from '../utils/nativeAppLauncher';
 
 interface PhoneAppsLauncherViewProps {
   lists: PhoneAppList[];
@@ -61,51 +67,6 @@ const COLOR_STYLES: Record<
 
 const LIST_ICONS = ['📱', '🕌', '💼', '💬', '🧭', '📚', '🏠', '⚡', '🎧', '💳', '🛠️', '🌟'];
 const APP_ICONS = ['📱', '🎙️', '📖', '💚', '✈️', '✉️', '📅', '📝', '📓', '🗺️', '▶️', '📞', '🎵', '🌐', '📸', '💼'];
-
-const isHttpLink = (url: string) => /^https?:\/\//i.test(url.trim());
-
-const normalizeDeepLink = (url: string): string => {
-  const trimmed = url.trim();
-  if (trimmed === 'whatsapp://') return 'whatsapp://send';
-  if (trimmed === 'tg://') return 'tg://resolve';
-  if (trimmed === 'youtube://') return 'vnd.youtube://';
-  return trimmed;
-};
-
-const getDefaultFallbackUrl = (deepLink: string, explicitFallback?: string): string => {
-  const trimmedFallback = explicitFallback?.trim();
-  if (trimmedFallback) return trimmedFallback;
-  const lower = deepLink.trim().toLowerCase();
-  if (lower.startsWith('whatsapp://')) return 'https://wa.me/';
-  if (lower.startsWith('youtube://') || lower.startsWith('vnd.youtube://')) {
-    return 'https://www.youtube.com/';
-  }
-  if (lower.startsWith('tg://')) return 'https://t.me/';
-  if (lower.startsWith('notion://')) return 'https://www.notion.so/';
-  if (lower.startsWith('instagram://')) return 'https://www.instagram.com/';
-  if (lower.startsWith('twitter://')) return 'https://x.com/';
-  if (lower.startsWith('spotify://')) return 'https://open.spotify.com/';
-  if (lower.startsWith('mailto:')) return 'https://mail.google.com/';
-  return '';
-};
-
-const isMobileWebRuntime = (): boolean => {
-  if (typeof navigator === 'undefined') return false;
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-};
-
-const triggerAnchorNavigation = (href: string, openInNewTab: boolean) => {
-  const link = document.createElement('a');
-  link.href = href;
-  if (openInNewTab) {
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-  }
-  link.style.display = 'none';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
 
 export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   lists,
@@ -247,122 +208,101 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
     setAppNote('');
   };
 
-  const handleLaunchApp = (
+  const handleLaunchApp = async (
     app: PhoneAppShortcut,
     e?: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>
   ) => {
+    e?.preventDefault();
     const resolvedDeepLink = normalizeDeepLink(app.deepLink);
     const resolvedFallback = getDefaultFallbackUrl(resolvedDeepLink, app.fallbackUrl);
 
-    // 1. Native Android (Capacitor) bridge: launches installed app package/intent directly
-    const androidLauncher = (
-      window as unknown as {
-        AndroidExternalLauncher?: {
-          openApp?: (deepLink: string, fallbackUrl: string) => boolean;
-        };
-      }
-    ).AndroidExternalLauncher;
-
-    if (androidLauncher?.openApp) {
-      e?.preventDefault();
-      try {
-        const opened = androidLauncher.openApp(resolvedDeepLink, resolvedFallback);
-        if (!opened) {
-          setLaunchNotice({
-            appName: app.name,
-            fallbackUrl: resolvedFallback || undefined,
-            message: `تعذر فتح تطبيق ${app.name} تلقائياً على الجهاز.`,
-          });
-        } else {
-          setLaunchNotice(null);
-        }
-      } catch {
-        if (resolvedFallback) {
-          triggerAnchorNavigation(resolvedFallback, true);
-        }
-      }
-      return;
-    }
-
-    // 2. Standard HTTP(S) links open directly in a new tab
-    if (isHttpLink(resolvedDeepLink)) {
-      setLaunchNotice(null);
-      return;
-    }
-
-    // 3. On desktop browsers / preview iframes where mobile deep links aren't registered,
-    // immediately open the web URL synchronously inside the click gesture so it's never blocked
-    const isInIframe = (() => {
-      try {
-        return window.self !== window.top;
-      } catch {
-        return true;
-      }
-    })();
-
-    if ((!isMobileWebRuntime() || isInIframe) && resolvedFallback) {
-      e?.preventDefault();
-      triggerAnchorNavigation(resolvedFallback, true);
-      setLaunchNotice({
-        appName: app.name,
-        fallbackUrl: resolvedFallback,
-        message: `تم فتح نسخة الويب لتطبيق ${app.name} في نافذة جديدة.`,
-      });
-      return;
-    }
-
-    // 4. Mobile web browser: trigger custom scheme synchronously and provide immediate fallback banner
-    e?.preventDefault();
-    setLaunchNotice({
-      appName: app.name,
-      fallbackUrl: resolvedFallback || undefined,
-      message: `جاري محاولة فتح ${app.name}...`,
-    });
-
     let leftPage = false;
-    const cleanup = () => {
+    const cleanupWatchers = () => {
       leftPage = true;
       window.removeEventListener('blur', onLeave);
       window.removeEventListener('pagehide', onLeave);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-    const onLeave = () => cleanup();
+    const onLeave = () => cleanupWatchers();
     const onVisibilityChange = () => {
-      if (document.hidden) cleanup();
+      if (document.hidden) cleanupWatchers();
     };
 
     window.addEventListener('blur', onLeave);
     window.addEventListener('pagehide', onLeave);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
-    try {
-      triggerAnchorNavigation(resolvedDeepLink, false);
-    } catch {
-      // Fall through to fallback timer
+    const result = await openNativeApp({
+      deepLink: resolvedDeepLink,
+      fallbackUrl: resolvedFallback || undefined,
+    });
+
+    if (result.method === 'capacitor-app-launcher' || result.method === 'android-bridge') {
+      cleanupWatchers();
+      if (result.opened) {
+        setLaunchNotice(null);
+      } else {
+        setLaunchNotice({
+          appName: app.name,
+          fallbackUrl: result.fallbackUrl,
+          message: `تعذر فتح تطبيق ${app.name} تلقائياً على الجهاز.`,
+        });
+      }
+      return;
     }
 
-    window.setTimeout(() => {
-      window.removeEventListener('blur', onLeave);
-      window.removeEventListener('pagehide', onLeave);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-
-      if (!leftPage && !document.hidden) {
-        if (resolvedFallback) {
-          setLaunchNotice({
-            appName: app.name,
-            fallbackUrl: resolvedFallback,
-            message: `إذا لم يفتح تطبيق ${app.name} تلقائياً، اضغط لفتحه عبر المتصفح:`,
-          });
-        } else {
-          setLaunchNotice({
-            appName: app.name,
-            message: `لم يستجب النظام للرابط (${resolvedDeepLink}) من داخل المتصفح. افتحه من تطبيق الهاتف.`,
-          });
-        }
-      } else {
+    if (result.method === 'web-anchor') {
+      cleanupWatchers();
+      if (isHttpLink(resolvedDeepLink)) {
         setLaunchNotice(null);
+      } else {
+        setLaunchNotice({
+          appName: app.name,
+          fallbackUrl: result.fallbackUrl,
+          message: `تم فتح نسخة الويب لتطبيق ${app.name} في نافذة جديدة.`,
+        });
       }
-    }, 750);
+      return;
+    }
+
+    if (result.method === 'deep-link-pending') {
+      setLaunchNotice({
+        appName: app.name,
+        fallbackUrl: result.fallbackUrl,
+        message: `جاري محاولة فتح ${app.name}...`,
+      });
+
+      window.setTimeout(() => {
+        window.removeEventListener('blur', onLeave);
+        window.removeEventListener('pagehide', onLeave);
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+
+        if (!leftPage && !document.hidden) {
+          if (result.fallbackUrl) {
+            setLaunchNotice({
+              appName: app.name,
+              fallbackUrl: result.fallbackUrl,
+              message: `إذا لم يفتح تطبيق ${app.name} تلقائياً، اضغط لفتحه عبر المتصفح:`,
+            });
+          } else {
+            setLaunchNotice({
+              appName: app.name,
+              message: `لم يستجب النظام للرابط (${resolvedDeepLink}) من داخل المتصفح. افتحه من تطبيق الهاتف.`,
+            });
+          }
+        } else {
+          setLaunchNotice(null);
+        }
+      }, 750);
+      return;
+    }
+
+    cleanupWatchers();
+    setLaunchNotice({
+      appName: app.name,
+      fallbackUrl: result.fallbackUrl,
+      message: `تعذر فتح تطبيق ${app.name} تلقائياً على الجهاز.`,
+    });
   };
 
   const visibleLists =

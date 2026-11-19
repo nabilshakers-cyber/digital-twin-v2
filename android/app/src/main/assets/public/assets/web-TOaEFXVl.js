@@ -1,0 +1,1 @@
+import{W as r}from"./index-DQ4_7PsE.js";import"./charts-DluBSxny.js";import"./firebase-CQabkFcD.js";class a extends r{async canOpenUrl(e){return{value:!0}}async openUrl(e){return window.open(e.url,"_blank"),{completed:!0}}}export{a as AppLauncherWeb};
