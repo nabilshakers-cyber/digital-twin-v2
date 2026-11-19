@@ -434,35 +434,41 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end animate-fadeIn">
-      <div className="w-full max-w-lg bg-slate-900 border-r sm:border-l border-slate-800 h-full flex flex-col shadow-2xl relative">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center sm:justify-end p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg max-h-[85vh] h-[85vh] bg-slate-900 border border-slate-800 rounded-3xl flex flex-col overflow-hidden shadow-2xl relative"
+        onClick={(e) => e.stopPropagation()}
+      >
         
-        {/* Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-emerald-500 p-0.5 shadow-md shadow-cyan-500/20">
+        {/* Sticky Header with Always-Visible Close (X) */}
+        <div className="shrink-0 sticky top-0 z-20 p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/95 backdrop-blur-md">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-emerald-500 p-0.5 shadow-md shadow-cyan-500/20 shrink-0">
               <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
                 <BrainCircuit className="w-5 h-5 text-cyan-400 animate-pulse" />
               </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2 truncate">
                 <span>المساعد الرقمي AI</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-950/80 text-cyan-300 border border-cyan-700/50">
                   ذكاء متكامل
                 </span>
               </h3>
-              <p className="text-[11px] text-emerald-400 font-medium">
+              <p className="text-[11px] text-emerald-400 font-medium truncate">
                 تحليل المهام • جدولة ذكية • صوت ونص
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               onClick={handleResetChat}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-2 rounded-full bg-slate-800/80 text-slate-300 hover:text-cyan-300 hover:bg-slate-700 transition-colors cursor-pointer"
               title="بدء محادثة جديدة"
             >
               <RotateCcw className="w-4 h-4" />
@@ -470,7 +476,8 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors cursor-pointer"
+              aria-label="إغلاق"
+              className="p-2 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700 transition-colors cursor-pointer"
               title="إغلاق"
             >
               <X className="w-5 h-5" />
@@ -479,7 +486,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
         </div>
 
         {/* Quick Suggestion Chips */}
-        <div className="p-3 border-b border-slate-800/80 bg-slate-900/60 overflow-x-auto flex items-center gap-1.5 no-scrollbar">
+        <div className="shrink-0 p-3 border-b border-slate-800/80 bg-slate-900/60 overflow-x-auto flex items-center gap-1.5 no-scrollbar">
           {quickPrompts.map((prompt, idx) => (
             <button
               key={idx}
@@ -492,7 +499,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
         </div>
 
         {/* Message Feed */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
           {messages.map((msg) => {
             const isTwin = msg.role === 'twin';
 

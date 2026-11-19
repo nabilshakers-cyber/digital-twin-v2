@@ -4,7 +4,6 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut,
-  type User,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -16,6 +15,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+import { isCapacitorNativeRuntime } from './utils/api';
 
 const app = initializeApp(firebaseConfig);
 
@@ -37,16 +37,109 @@ try {
 export const db = firestoreInstance;
 export const auth = getAuth(app);
 
+export interface AppAuthUser {
+  uid: string;
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+  mode: 'local' | 'firebase';
+}
+
+export const LOCAL_AUTH_STORAGE_KEY = 'digital_twin_local_auth_v1';
+
+export function getSavedLocalAuthUser(): AppAuthUser | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.uid) {
+      return {
+        uid: String(parsed.uid),
+        displayName: parsed.displayName || 'مستخدم التطبيق',
+        email: parsed.email || 'local@digitaltwin.app',
+        photoURL: parsed.photoURL || null,
+        mode: 'local',
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function signInLocally(displayName?: string, email?: string): AppAuthUser {
+  const user: AppAuthUser = {
+    uid: 'local-twin-user',
+    displayName: displayName?.trim() || 'حسابك المحلي',
+    email: email?.trim() || 'حساب محفوظ محلياً على الجهاز',
+    photoURL: null,
+    mode: 'local',
+  };
+  try {
+    localStorage.setItem(LOCAL_AUTH_STORAGE_KEY, JSON.stringify(user));
+  } catch {
+    // ignore storage errors
+  }
+  return user;
+}
+
+export function clearLocalAuthUser(): void {
+  try {
+    localStorage.removeItem(LOCAL_AUTH_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export async function signInWithGoogle(): Promise<User> {
-  const result = await signInWithPopup(auth, googleProvider);
-  return result.user;
+export async function signInInApp(
+  fallbackName?: string,
+  fallbackEmail?: string,
+  preferCloudPopup = false
+): Promise<AppAuthUser> {
+  // Inside Capacitor / Android WebView, NEVER open external firebaseapp.com popups or redirects
+  if (isCapacitorNativeRuntime() || !preferCloudPopup) {
+    return signInLocally(fallbackName, fallbackEmail);
+  }
+
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    clearLocalAuthUser();
+    return {
+      uid: result.user.uid,
+      displayName: result.user.displayName,
+      email: result.user.email,
+      photoURL: result.user.photoURL,
+      mode: 'firebase',
+    };
+  } catch (err: any) {
+    const code = err?.code || '';
+    if (
+      code === 'auth/popup-closed-by-user' ||
+      code === 'auth/cancelled-popup-request'
+    ) {
+      throw new Error('تم إلغاء نافذة تسجيل الدخول.');
+    }
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+      throw new Error(
+        'المتصفح منع النافذة المنبثقة. يمكنك تسجيل الدخول محلياً داخل التطبيق بدون مغادرة الصفحة.'
+      );
+    }
+    throw new Error('تعذر تسجيل الدخول السحابي. يمكنك استخدام الدخول المحلي داخل التطبيق.');
+  }
 }
 
 export async function signOutUser(): Promise<void> {
-  await signOut(auth);
+  clearLocalAuthUser();
+  if (auth.currentUser) {
+    try {
+      await signOut(auth);
+    } catch {
+      // Never block sign-out or leave app on network failure
+    }
+  }
 }
 
 export enum OperationType {

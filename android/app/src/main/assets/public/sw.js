@@ -87,7 +87,7 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
     "revision": "36ae24f8b5aabdfadb25eb462b95c5be"
   }, {
     "url": "index.html",
-    "revision": "be88dfe64e9ae42b3aef47ad610c50e3"
+    "revision": "6ef52b33eeef688343c5c25ab9967b58"
   }, {
     "url": "icon.svg",
     "revision": "79ce18d5b9bfb8f48b832d7260d111b6"
@@ -95,16 +95,13 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
     "url": "apple-touch-icon.png",
     "revision": "f0cf9e7c8b99e6ef585d33696b45baac"
   }, {
-    "url": "assets/workbox-window.prod.es5-BBnX5xw4.js",
-    "revision": null
-  }, {
     "url": "assets/motion-l0sNRNKZ.js",
     "revision": null
   }, {
-    "url": "assets/index-DNd5nP-Q.css",
+    "url": "assets/index-D_qdJaP9.js",
     "revision": null
   }, {
-    "url": "assets/index-CIsptDHN.js",
+    "url": "assets/index-DW3DHC06.css",
     "revision": null
   }, {
     "url": "assets/firebase-CQabkFcD.js",
@@ -119,6 +116,9 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
     "url": "icon.svg",
     "revision": "79ce18d5b9bfb8f48b832d7260d111b6"
   }, {
+    "url": "manifest.json",
+    "revision": "6c398304bf7c08877c62f68d673259c0"
+  }, {
     "url": "pwa-192x192.png",
     "revision": "36ae24f8b5aabdfadb25eb462b95c5be"
   }, {
@@ -127,9 +127,6 @@ define(['./workbox-43e44e5a'], (function (workbox) { 'use strict';
   }, {
     "url": "pwa-maskable-512x512.png",
     "revision": "1a6006ce032567d7d9e0bd7caf9fbfb2"
-  }, {
-    "url": "manifest.webmanifest",
-    "revision": "dd4f66320fa96d8e49a14f42cf56f1ee"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html")));

@@ -189,19 +189,25 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden my-6">
-        {/* Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Sticky Header */}
+        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-3 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
               <LayoutGrid className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="text-base font-bold text-white">
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white truncate">
                 {editingWidget ? 'تعديل المكون المخصص' : 'تخصيص وإدارة مكونات اللوحة'}
               </h3>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
                 أضف مكونات جديدة مخصصة، عدّل الموجود، أعد ترتيب الأقسام، أو احذف/أخفِ أي مكون
               </p>
             </div>
@@ -210,19 +216,20 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer"
+            aria-label="إغلاق"
+            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Mode Tabs */}
         {!editingWidget && (
-          <div className="px-5 pt-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+          <div className="shrink-0 px-4 sm:px-5 pt-3 flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={() => setActiveTab('manage')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
                 activeTab === 'manage'
                   ? 'bg-cyan-600 text-white shadow-md'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -234,7 +241,7 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
             <button
               type="button"
               onClick={() => setActiveTab('create')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
                 activeTab === 'create'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -247,7 +254,7 @@ export const DashboardCustomizerModal: React.FC<DashboardCustomizerModalProps> =
         )}
 
         {/* Content */}
-        <div className="p-5 max-h-[70vh] overflow-y-auto">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
           {activeTab === 'manage' ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">

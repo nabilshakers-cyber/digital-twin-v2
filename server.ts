@@ -1,4 +1,6 @@
 import express from "express";
+import cors from "cors";
+import http from "http";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
@@ -8,6 +10,9 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+app.use(cors());
+app.options("*", cors());
 
 app.use(express.json({ limit: "15mb" }));
 
@@ -827,11 +832,95 @@ ${JSON.stringify(adhkarState || {}, null, 2)}
   }
 });
 
+// Ensure unknown /api/* requests return JSON instead of SPA HTML
+app.all("/api/*", (req, res) => {
+  res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.originalUrl}` });
+});
+
 // Vite middleware setup
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV !== "production") {
+    const hmrDisabled = process.env.DISABLE_HMR === "true";
+
+    if (hmrDisabled) {
+      app.get("/@vite/client", (_req, res) => {
+        res.type("application/javascript").send(`
+const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  } else {
+    style.textContent = content;
+  }
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export function injectQuery(url) { return url; }
+export class ErrorOverlay {}
+`);
+      });
+    }
+
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      plugins: [
+        {
+          name: "express-hmr-server",
+          config(userConfig) {
+            if (hmrDisabled || userConfig.server?.hmr === false) {
+              return { server: { hmr: false, ws: false } };
+            }
+            return {
+              server: {
+                hmr: {
+                  server: httpServer,
+                },
+              },
+            };
+          },
+          configResolved(resolvedConfig) {
+            if (!hmrDisabled && resolvedConfig.server.hmr !== false) {
+              (resolvedConfig.server as any).hmr = {
+                ...(typeof resolvedConfig.server.hmr === "object"
+                  ? resolvedConfig.server.hmr
+                  : {}),
+                server: httpServer,
+              };
+            }
+          },
+        },
+      ],
+      server: {
+        middlewareMode: true,
+        ws: hmrDisabled ? false : undefined,
+        hmr: hmrDisabled ? false : { server: httpServer },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -843,7 +932,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Digital Twin Server running on http://localhost:${PORT}`);
   });
 }

@@ -5,7 +5,11 @@ import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const backendUrl = (process.env.VITE_API_BASE_URL || process.env.APP_URL || '').replace(/\/$/, '');
   return {
+    define: {
+      __APP_BACKEND_URL__: JSON.stringify(backendUrl),
+    },
     plugins: [
       react(),
       tailwindcss(),

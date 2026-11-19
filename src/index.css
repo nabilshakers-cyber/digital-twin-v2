@@ -57,3 +57,19 @@
 .animate-soft-pulse {
   animation: soft-pulse 3s infinite ease-in-out;
 }
+
+/* Mobile-safe modal viewport constraints */
+.app-modal-panel {
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+

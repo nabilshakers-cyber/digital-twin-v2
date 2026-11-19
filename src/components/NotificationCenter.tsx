@@ -132,9 +132,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute left-0 mt-2.5 w-[340px] sm:w-[390px] bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
+        <div className="absolute left-0 mt-2.5 w-[340px] sm:w-[390px] max-w-[calc(100vw-1.5rem)] max-h-[85vh] flex flex-col bg-slate-900/95 backdrop-blur-xl border border-slate-700/80 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fadeIn">
           {/* Header */}
-          <div className="p-3.5 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between">
+          <div className="shrink-0 sticky top-0 z-20 p-3.5 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BellRing className="w-4 h-4 text-cyan-400" />
               <h4 className="text-xs font-bold text-slate-100">
@@ -280,7 +280,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
           </div>
 
           {/* Reminders Feed */}
-          <div className="max-h-[340px] overflow-y-auto p-3 space-y-2.5">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-2.5">
             {isDndActive ? (
               <div className="py-8 text-center space-y-2.5 bg-indigo-950/20 rounded-xl border border-indigo-800/40 p-4">
                 <ShieldCheck className="w-8 h-8 text-indigo-400 mx-auto" />

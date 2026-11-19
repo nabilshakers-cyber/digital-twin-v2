@@ -64,6 +64,49 @@ const APP_ICONS = ['📱', '🎙️', '📖', '💚', '✈️', '✉️', '📅'
 
 const isHttpLink = (url: string) => /^https?:\/\//i.test(url.trim());
 
+const normalizeDeepLink = (url: string): string => {
+  const trimmed = url.trim();
+  if (trimmed === 'whatsapp://') return 'whatsapp://send';
+  if (trimmed === 'tg://') return 'tg://resolve';
+  if (trimmed === 'youtube://') return 'vnd.youtube://';
+  return trimmed;
+};
+
+const getDefaultFallbackUrl = (deepLink: string, explicitFallback?: string): string => {
+  const trimmedFallback = explicitFallback?.trim();
+  if (trimmedFallback) return trimmedFallback;
+  const lower = deepLink.trim().toLowerCase();
+  if (lower.startsWith('whatsapp://')) return 'https://wa.me/';
+  if (lower.startsWith('youtube://') || lower.startsWith('vnd.youtube://')) {
+    return 'https://www.youtube.com/';
+  }
+  if (lower.startsWith('tg://')) return 'https://t.me/';
+  if (lower.startsWith('notion://')) return 'https://www.notion.so/';
+  if (lower.startsWith('instagram://')) return 'https://www.instagram.com/';
+  if (lower.startsWith('twitter://')) return 'https://x.com/';
+  if (lower.startsWith('spotify://')) return 'https://open.spotify.com/';
+  if (lower.startsWith('mailto:')) return 'https://mail.google.com/';
+  return '';
+};
+
+const isMobileWebRuntime = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+};
+
+const triggerAnchorNavigation = (href: string, openInNewTab: boolean) => {
+  const link = document.createElement('a');
+  link.href = href;
+  if (openInNewTab) {
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  }
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   lists,
   onAddList,
@@ -74,6 +117,11 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   onDeleteAppFromList,
 }) => {
   const [selectedListFilter, setSelectedListFilter] = useState<string>('all');
+  const [launchNotice, setLaunchNotice] = useState<{
+    appName: string;
+    fallbackUrl?: string;
+    message: string;
+  } | null>(null);
 
   // Add / Edit List state
   const [isListFormOpen, setIsListFormOpen] = useState(false);
@@ -199,6 +247,124 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
     setAppNote('');
   };
 
+  const handleLaunchApp = (
+    app: PhoneAppShortcut,
+    e?: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>
+  ) => {
+    const resolvedDeepLink = normalizeDeepLink(app.deepLink);
+    const resolvedFallback = getDefaultFallbackUrl(resolvedDeepLink, app.fallbackUrl);
+
+    // 1. Native Android (Capacitor) bridge: launches installed app package/intent directly
+    const androidLauncher = (
+      window as unknown as {
+        AndroidExternalLauncher?: {
+          openApp?: (deepLink: string, fallbackUrl: string) => boolean;
+        };
+      }
+    ).AndroidExternalLauncher;
+
+    if (androidLauncher?.openApp) {
+      e?.preventDefault();
+      try {
+        const opened = androidLauncher.openApp(resolvedDeepLink, resolvedFallback);
+        if (!opened) {
+          setLaunchNotice({
+            appName: app.name,
+            fallbackUrl: resolvedFallback || undefined,
+            message: `تعذر فتح تطبيق ${app.name} تلقائياً على الجهاز.`,
+          });
+        } else {
+          setLaunchNotice(null);
+        }
+      } catch {
+        if (resolvedFallback) {
+          triggerAnchorNavigation(resolvedFallback, true);
+        }
+      }
+      return;
+    }
+
+    // 2. Standard HTTP(S) links open directly in a new tab
+    if (isHttpLink(resolvedDeepLink)) {
+      setLaunchNotice(null);
+      return;
+    }
+
+    // 3. On desktop browsers / preview iframes where mobile deep links aren't registered,
+    // immediately open the web URL synchronously inside the click gesture so it's never blocked
+    const isInIframe = (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
+
+    if ((!isMobileWebRuntime() || isInIframe) && resolvedFallback) {
+      e?.preventDefault();
+      triggerAnchorNavigation(resolvedFallback, true);
+      setLaunchNotice({
+        appName: app.name,
+        fallbackUrl: resolvedFallback,
+        message: `تم فتح نسخة الويب لتطبيق ${app.name} في نافذة جديدة.`,
+      });
+      return;
+    }
+
+    // 4. Mobile web browser: trigger custom scheme synchronously and provide immediate fallback banner
+    e?.preventDefault();
+    setLaunchNotice({
+      appName: app.name,
+      fallbackUrl: resolvedFallback || undefined,
+      message: `جاري محاولة فتح ${app.name}...`,
+    });
+
+    let leftPage = false;
+    const cleanup = () => {
+      leftPage = true;
+      window.removeEventListener('blur', onLeave);
+      window.removeEventListener('pagehide', onLeave);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+    const onLeave = () => cleanup();
+    const onVisibilityChange = () => {
+      if (document.hidden) cleanup();
+    };
+
+    window.addEventListener('blur', onLeave);
+    window.addEventListener('pagehide', onLeave);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    try {
+      triggerAnchorNavigation(resolvedDeepLink, false);
+    } catch {
+      // Fall through to fallback timer
+    }
+
+    window.setTimeout(() => {
+      window.removeEventListener('blur', onLeave);
+      window.removeEventListener('pagehide', onLeave);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+
+      if (!leftPage && !document.hidden) {
+        if (resolvedFallback) {
+          setLaunchNotice({
+            appName: app.name,
+            fallbackUrl: resolvedFallback,
+            message: `إذا لم يفتح تطبيق ${app.name} تلقائياً، اضغط لفتحه عبر المتصفح:`,
+          });
+        } else {
+          setLaunchNotice({
+            appName: app.name,
+            message: `لم يستجب النظام للرابط (${resolvedDeepLink}) من داخل المتصفح. افتحه من تطبيق الهاتف.`,
+          });
+        }
+      } else {
+        setLaunchNotice(null);
+      }
+    }, 750);
+  };
+
   const visibleLists =
     selectedListFilter === 'all'
       ? lists
@@ -251,6 +417,33 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
           )}
         </div>
       </div>
+
+      {launchNotice && (
+        <div className="bg-cyan-950/50 border border-cyan-500/40 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-cyan-100 animate-fadeIn">
+          <span>{launchNotice.message}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            {launchNotice.fallbackUrl && (
+              <a
+                href={launchNotice.fallbackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold flex items-center gap-1"
+              >
+                <Globe className="w-3 h-3" />
+                <span>فتح {launchNotice.appName}</span>
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => setLaunchNotice(null)}
+              className="p-1 rounded-lg text-cyan-300 hover:bg-cyan-900/60 cursor-pointer"
+              aria-label="إغلاق التنبيه"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Category / List Filter Pills */}
       {lists.length > 0 && (
@@ -591,7 +784,9 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {list.apps.map((app) => {
-                      const http = isHttpLink(app.deepLink);
+                      const resolvedDeepLink = normalizeDeepLink(app.deepLink);
+                      const http = isHttpLink(resolvedDeepLink);
+                      const resolvedFallback = getDefaultFallbackUrl(resolvedDeepLink, app.fallbackUrl);
                       return (
                         <div
                           key={app.id}
@@ -599,9 +794,10 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                         >
                           <div className="flex items-start justify-between gap-2">
                             <a
-                              href={app.deepLink}
+                              href={resolvedDeepLink}
                               target={http ? '_blank' : undefined}
                               rel={http ? 'noopener noreferrer' : undefined}
+                              onClick={(e) => handleLaunchApp(app, e)}
                               className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer"
                               title={`الدخول إلى ${app.name}`}
                             >
@@ -643,18 +839,19 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
 
                           <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-800/60">
                             <a
-                              href={app.deepLink}
+                              href={resolvedDeepLink}
                               target={http ? '_blank' : undefined}
                               rel={http ? 'noopener noreferrer' : undefined}
+                              onClick={(e) => handleLaunchApp(app, e)}
                               className="text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer"
                             >
                               <Smartphone className="w-3 h-3" />
                               <span>فتح التطبيق</span>
                             </a>
 
-                            {app.fallbackUrl && (
+                            {resolvedFallback && (
                               <a
-                                href={app.fallbackUrl}
+                                href={resolvedFallback}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"

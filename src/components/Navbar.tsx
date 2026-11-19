@@ -17,7 +17,7 @@ import {
   LogIn,
   RefreshCw,
 } from 'lucide-react';
-import type { User } from 'firebase/auth';
+import type { AppAuthUser } from '../firebase';
 import { DigitalTwinProfile, Task } from '../types';
 import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
@@ -50,7 +50,7 @@ interface NavbarProps {
   manualDnd: boolean;
   onToggleAutoDnd: () => void;
   onToggleManualDnd: () => void;
-  authUser: User | null;
+  authUser: AppAuthUser | null;
   authLoading: boolean;
   cloudSyncStatus: 'local' | 'syncing' | 'synced' | 'error';
   onSignIn: () => Promise<void>;
@@ -271,30 +271,32 @@ export const Navbar: React.FC<NavbarProps> = ({
               onCheckTomorrowEnergy={onCheckTomorrowEnergy}
             />
 
-            {/* Firebase Auth & Cloud Sync Badge */}
+            {/* In-App Auth & Sync Badge */}
             {authUser ? (
               <button
                 type="button"
                 id="btn-cloud-sync-status"
                 onClick={onOpenCloudSettings}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
-                  cloudSyncStatus === 'syncing'
+                  authUser.mode === 'local'
+                    ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-200 hover:bg-emerald-900/60'
+                    : cloudSyncStatus === 'syncing'
                     ? 'bg-cyan-950/70 border-cyan-500/50 text-cyan-200'
                     : cloudSyncStatus === 'error'
                     ? 'bg-rose-950/70 border-rose-500/50 text-rose-200'
                     : 'bg-emerald-950/60 border-emerald-600/50 text-emerald-200 hover:bg-emerald-900/60'
                 }`}
-                title={`متصل بحساب ${authUser.email || authUser.displayName || ''} — مزامنة سحابية`}
+                title={`مسجّل باسم ${authUser.displayName || authUser.email || ''} — اضغط لإدارة الحساب أو تسجيل الخروج`}
               >
-                {cloudSyncStatus === 'syncing' ? (
+                {authUser.mode === 'firebase' && cloudSyncStatus === 'syncing' ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" />
-                ) : cloudSyncStatus === 'error' ? (
+                ) : authUser.mode === 'firebase' && cloudSyncStatus === 'error' ? (
                   <CloudOff className="w-3.5 h-3.5 text-rose-300" />
                 ) : (
                   <Cloud className="w-3.5 h-3.5 text-emerald-300" />
                 )}
                 <span className="hidden lg:inline max-w-[100px] truncate">
-                  {authUser.displayName?.split(' ')[0] || 'متزامن'}
+                  {authUser.displayName?.split(' ')[0] || 'مسجّل'}
                 </span>
               </button>
             ) : (
@@ -304,10 +306,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 disabled={authLoading}
                 onClick={onSignIn}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                title="تسجيل الدخول بحساب Google لمزامنة المهام والتقويم والإعدادات"
+                title="تسجيل الدخول محلياً داخل التطبيق"
               >
                 <LogIn className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">مزامنة سحابية</span>
+                <span className="hidden sm:inline">تسجيل الدخول</span>
               </button>
             )}
 

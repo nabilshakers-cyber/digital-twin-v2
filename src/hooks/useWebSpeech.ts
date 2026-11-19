@@ -55,7 +55,7 @@ function mapSpeechErrorToArabic(errorCode: string): string {
   switch (errorCode) {
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'تم رفض إذن الميكروفون. يرجى السماح بالوصول إلى الميكروفون من إعدادات المتصفح.';
+      return 'تم رفض إذن الميكروفون. يرجى السماح بالوصول إلى الميكروفون من إعدادات التطبيق أو المتصفح.';
     case 'no-speech':
       return 'لم يتم التقاط أي كلام واضح. حاول الاقتراب من الميكروفون والتحدث بوضوح.';
     case 'audio-capture':
@@ -66,6 +66,28 @@ function mapSpeechErrorToArabic(errorCode: string): string {
       return '';
     default:
       return 'تعذر التعرف على الصوت، يرجى المحاولة مرة أخرى.';
+  }
+}
+
+async function ensureMicrophoneAccess(): Promise<{ ok: boolean; message?: string }> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    return { ok: true };
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((track) => track.stop());
+    return { ok: true };
+  } catch (err: any) {
+    const name = err?.name || '';
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return { ok: false, message: 'لم يتم العثور على ميكروفون متصل بهذا الجهاز.' };
+    }
+    return {
+      ok: false,
+      message:
+        'تم رفض إذن الميكروفون. يرجى السماح للتطبيق بالوصول إلى الميكروفون من أذونات الجهاز ثم المحاولة مجدداً.',
+    };
   }
 }
 
@@ -114,7 +136,7 @@ export function useWebSpeech(options: UseWebSpeechOptions = {}) {
   }, []);
 
   const startListening = useCallback(
-    (overrideLang?: 'ar-SA' | 'en-US') => {
+    async (overrideLang?: 'ar-SA' | 'en-US') => {
       const Ctor = getSpeechRecognitionCtor();
       if (!Ctor) {
         setError('متصفحك الحالي لا يدعم واجهة Web Speech API للتعرف المباشر على الكلام.');
@@ -132,6 +154,17 @@ export function useWebSpeech(options: UseWebSpeechOptions = {}) {
       setError(null);
       setInterimTranscript('');
       finalBufferRef.current = '';
+
+      // Explicitly prompt runtime microphone permission on Android WebView & browsers first
+      const perm = await ensureMicrophoneAccess();
+      if (!perm.ok) {
+        setError(
+          perm.message ||
+            'تم رفض إذن الميكروفون. يرجى السماح بالوصول إلى الميكروفون من إعدادات التطبيق.'
+        );
+        setIsListening(false);
+        return;
+      }
 
       const recognition = new Ctor();
       recognition.lang = overrideLang || lang;

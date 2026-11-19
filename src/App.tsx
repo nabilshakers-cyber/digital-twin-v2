@@ -36,8 +36,14 @@ import { SmartReminderToasts } from './components/SmartReminderToasts';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { classifyTasksWithAI, optimizeScheduleWithAI } from './utils/api';
 import { soundEngine } from './utils/audioSynth';
-import { onAuthStateChanged, type User } from 'firebase/auth';
-import { auth, signInWithGoogle, signOutUser } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import {
+  auth,
+  getSavedLocalAuthUser,
+  signInInApp,
+  signOutUser,
+  type AppAuthUser,
+} from './firebase';
 import {
   deleteCustomWidgetDoc,
   deleteGoalDoc,
@@ -199,8 +205,8 @@ export default function App() {
   const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'widgets' | 'cloud' | 'android'>('profile');
   const [isFocusOpen, setIsFocusOpen] = useState(false);
 
-  // 3.5 Firebase Auth & Cloud Sync State
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  // 3.5 Local / Firebase Auth & Cloud Sync State
+  const [authUser, setAuthUser] = useState<AppAuthUser | null>(() => getSavedLocalAuthUser());
   const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -365,21 +371,30 @@ export default function App() {
     autoDndEnabled,
   };
 
-  // Firebase Auth listener
+  // Firebase Auth listener (preserves in-app local session when not signed in via Firebase)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setAuthUser(user);
-      setAuthReady(true);
-      if (!user) {
+    const unsub = onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        setAuthUser({
+          uid: fbUser.uid,
+          displayName: fbUser.displayName,
+          email: fbUser.email,
+          photoURL: fbUser.photoURL,
+          mode: 'firebase',
+        });
+      } else {
+        const localUser = getSavedLocalAuthUser();
+        setAuthUser(localUser);
         setCloudSyncStatus('local');
       }
+      setAuthReady(true);
     });
     return () => unsub();
   }, []);
 
-  // Firestore real-time synchronization (active only when authReady && authUser)
+  // Firestore real-time synchronization (active only when signed in with Firebase Auth)
   useEffect(() => {
-    if (!authReady || !authUser) return;
+    if (!authReady || !authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
 
     let cancelled = false;
     let unsubCloud: (() => void) | undefined;
@@ -445,7 +460,7 @@ export default function App() {
   }, [authReady, authUser]);
 
   const runCloudMutation = async (fn: (uid: string) => Promise<void>) => {
-    if (!authUser) return;
+    if (!authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
     setCloudSyncStatus('syncing');
     try {
       await fn(authUser.uid);
@@ -462,33 +477,107 @@ export default function App() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
+  // Single-modal mutex helpers so mobile overlays never stack or overlap
+  const closeAllModals = () => {
+    setIsChatOpen(false);
+    setIsQuickAddOpen(false);
+    setIsProfileOpen(false);
+    setIsFocusOpen(false);
+    setIsBreakdownOpen(false);
+    setIsBriefingOpen(false);
+    setIsContextualBriefingOpen(false);
+    setCurrentTab((prev) => (prev === 'focus' ? 'dashboard' : prev));
+  };
+
+  const openChatModal = (prompt?: string) => {
+    closeAllModals();
+    setChatInitialPrompt(prompt);
+    setIsChatOpen(true);
+  };
+
+  const openQuickAddModal = () => {
+    closeAllModals();
+    setIsQuickAddOpen(true);
+  };
+
+  const openProfileModal = (tab: 'profile' | 'widgets' | 'cloud' | 'android' = 'profile') => {
+    closeAllModals();
+    setProfileInitialTab(tab);
+    setIsProfileOpen(true);
+  };
+
+  const openFocusModal = (task?: Task) => {
+    closeAllModals();
+    setFocusTask(task);
+    setIsFocusOpen(true);
+  };
+
+  const openBreakdownModal = (task: Task) => {
+    closeAllModals();
+    setBreakdownTask(task);
+    setIsBreakdownOpen(true);
+  };
+
+  const openBriefingModal = (type: 'morning' | 'evening') => {
+    closeAllModals();
+    setBriefingType(type);
+    setIsBriefingOpen(true);
+  };
+
+  const openContextualBriefingModal = (task: Task) => {
+    closeAllModals();
+    setContextualBriefingTask(task);
+    setIsContextualBriefingOpen(true);
+  };
+
+  const handleNavigateTab = (tab: 'dashboard' | 'tasks' | 'schedule' | 'focus') => {
+    closeAllModals();
+    if (tab === 'focus') {
+      setIsFocusOpen(true);
+    }
+    setCurrentTab(tab);
+  };
+
+  const handleSignIn = async (
+    displayName?: string,
+    email?: string,
+    preferCloudPopup = false
+  ) => {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      await signInWithGoogle();
+      const user = await signInInApp(
+        displayName || profile.name,
+        email,
+        preferCloudPopup
+      );
+      setAuthUser(user);
+      setCloudSyncStatus(user.mode === 'local' ? 'local' : 'syncing');
     } catch (err: any) {
-      console.error('Google Sign-In failed:', err);
-      setAuthError(err?.message || 'تعذر تسجيل الدخول بحساب Google.');
-      setProfileInitialTab('cloud');
-      setIsProfileOpen(true);
+      console.error('Sign-In failed:', err);
+      setAuthError(err?.message || 'تعذر تسجيل الدخول.');
+      openProfileModal('cloud');
     } finally {
       setAuthLoading(false);
     }
   };
 
-  const handleGoogleSignOut = async () => {
+  const handleSignOut = async () => {
     setAuthLoading(true);
     try {
       await signOutUser();
+      setAuthUser(null);
       setCloudSyncStatus('local');
+      setAuthError(null);
+      closeAllModals();
+      setCurrentTab('dashboard');
     } finally {
       setAuthLoading(false);
     }
   };
 
   const handlePushLocalToCloud = async () => {
-    if (!authUser) return;
+    if (!authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
     await runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, latestSnapshotRef.current));
   };
 
@@ -1403,14 +1492,13 @@ export default function App() {
 
   const handleReviewTomorrowSchedule = () => {
     setScheduleFocusDate(getTomorrowDateString());
-    setCurrentTab('schedule');
+    handleNavigateTab('schedule');
   };
 
   const handleRebalanceTomorrowWithTwin = (analysis: TomorrowEnergyAnalysis) => {
-    setChatInitialPrompt(
+    openChatModal(
       `تحليل جدول الغد (${analysis.tomorrowIso}) يظهر ضغطاً زائداً بنسبة ${analysis.usagePercent}% (${analysis.totalHours} ساعة، ${analysis.totalItemsCount} مهام/مواعيد) مقارنة بمستوى طاقتي المخصص (${analysis.capacity.label} - بحد ${analysis.capacity.maxHours} ساعة). ساعدني في تخفيف الجدول وترحيل المهام غير العاجلة.`
     );
-    setIsChatOpen(true);
   };
 
   return (
@@ -1419,21 +1507,12 @@ export default function App() {
       {/* Top Navbar */}
       <Navbar
         currentTab={currentTab}
-        setCurrentTab={setCurrentTab}
+        setCurrentTab={handleNavigateTab}
         profile={profile}
-        onOpenQuickAdd={() => setIsQuickAddOpen(true)}
-        onOpenChat={() => {
-          setChatInitialPrompt(undefined);
-          setIsChatOpen(true);
-        }}
-        onOpenProfile={() => {
-          setProfileInitialTab('profile');
-          setIsProfileOpen(true);
-        }}
-        onOpenBriefing={(type) => {
-          setBriefingType(type);
-          setIsBriefingOpen(true);
-        }}
+        onOpenQuickAdd={openQuickAddModal}
+        onOpenChat={() => openChatModal(undefined)}
+        onOpenProfile={() => openProfileModal('profile')}
+        onOpenBriefing={(type) => openBriefingModal(type)}
         syncScore={syncScore}
         reminders={smartReminders}
         pushPermission={pushPermission}
@@ -1454,10 +1533,7 @@ export default function App() {
         onCompleteReminder={handleCompleteReminder}
         onSnoozeReminder={handleSnoozeReminder}
         onDismissReminder={handleDismissReminder}
-        onStartFocus={(task) => {
-          setFocusTask(task);
-          setIsFocusOpen(true);
-        }}
+        onStartFocus={(task) => openFocusModal(task)}
         isDndActive={isDndActive}
         autoDndEnabled={autoDndEnabled}
         manualDnd={manualDnd}
@@ -1470,11 +1546,8 @@ export default function App() {
         authUser={authUser}
         authLoading={authLoading}
         cloudSyncStatus={cloudSyncStatus}
-        onSignIn={handleGoogleSignIn}
-        onOpenCloudSettings={() => {
-          setProfileInitialTab('cloud');
-          setIsProfileOpen(true);
-        }}
+        onSignIn={() => handleSignIn(profile.name, undefined, false)}
+        onOpenCloudSettings={() => openProfileModal('cloud')}
         onReviewTomorrowSchedule={handleReviewTomorrowSchedule}
         onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
         onCheckTomorrowEnergy={() => handleTriggerTomorrowEnergyCheck()}
@@ -1489,33 +1562,18 @@ export default function App() {
             schedule={schedule}
             onToggleTask={handleToggleTask}
             onToggleScheduleBlock={handleToggleScheduleBlock}
-            onStartFocus={(task) => {
-              setFocusTask(task);
-              setIsFocusOpen(true);
-            }}
-            onOpenTaskBreakdown={(task) => {
-              setBreakdownTask(task);
-              setIsBreakdownOpen(true);
-            }}
-            onOpenChat={(prompt) => {
-              setChatInitialPrompt(prompt);
-              setIsChatOpen(true);
-            }}
-            onOpenQuickAdd={() => setIsQuickAddOpen(true)}
-            onOpenBriefing={(type) => {
-              setBriefingType(type);
-              setIsBriefingOpen(true);
-            }}
-            onNavigateTab={setCurrentTab}
+            onStartFocus={(task) => openFocusModal(task)}
+            onOpenTaskBreakdown={(task) => openBreakdownModal(task)}
+            onOpenChat={(prompt) => openChatModal(prompt)}
+            onOpenQuickAdd={openQuickAddModal}
+            onOpenBriefing={(type) => openBriefingModal(type)}
+            onNavigateTab={handleNavigateTab}
             goals={goals}
             onAddGoal={handleAddGoal}
             onUpdateGoal={handleUpdateGoal}
             onUpdateGoalProgress={handleUpdateGoalProgress}
             onDeleteGoal={handleDeleteGoal}
-            onOpenContextualBriefing={(task) => {
-              setContextualBriefingTask(task);
-              setIsContextualBriefingOpen(true);
-            }}
+            onOpenContextualBriefing={(task) => openContextualBriefingModal(task)}
             onPostponeTask={handlePostponeTask}
             onPostponeAllSuggested={handlePostponeAllSuggested}
             quranRoutine={quranRoutine}
@@ -1534,10 +1592,7 @@ export default function App() {
                 syncWorkspaceFields(uid, { quranNotificationsEnabled: next })
               );
             }}
-            onOpenProfile={() => {
-              setProfileInitialTab('profile');
-              setIsProfileOpen(true);
-            }}
+            onOpenProfile={() => openProfileModal('profile')}
             dashboardLayout={dashboardLayout}
             customWidgets={customWidgets}
             onToggleWidgetVisibility={handleToggleWidgetVisibility}
@@ -1565,19 +1620,10 @@ export default function App() {
             onUpdateTask={handleUpdateTask}
             onDeleteTask={handleDeleteTask}
             onToggleSubtask={handleToggleSubtask}
-            onOpenTaskBreakdown={(task) => {
-              setBreakdownTask(task);
-              setIsBreakdownOpen(true);
-            }}
-            onStartFocus={(task) => {
-              setFocusTask(task);
-              setIsFocusOpen(true);
-            }}
-            onOpenQuickAdd={() => setIsQuickAddOpen(true)}
-            onOpenContextualBriefing={(task) => {
-              setContextualBriefingTask(task);
-              setIsContextualBriefingOpen(true);
-            }}
+            onOpenTaskBreakdown={(task) => openBreakdownModal(task)}
+            onStartFocus={(task) => openFocusModal(task)}
+            onOpenQuickAdd={openQuickAddModal}
+            onOpenContextualBriefing={(task) => openContextualBriefingModal(task)}
             onPostponeTask={handlePostponeTask}
             onAutoClassifyTasks={handleAutoClassifyTasks}
           />
@@ -1593,19 +1639,13 @@ export default function App() {
             onUpdateScheduleBlock={handleUpdateScheduleBlock}
             onDeleteScheduleBlock={handleDeleteScheduleBlock}
             onOptimizeSchedule={handleOptimizeSchedule}
-            onStartFocus={(task) => {
-              setFocusTask(task);
-              setIsFocusOpen(true);
-            }}
+            onStartFocus={(task) => openFocusModal(task)}
             onPostponeTask={handlePostponeTask}
             onPostponeAllSuggested={handlePostponeAllSuggested}
             isOptimizing={isOptimizingSchedule}
             optimizationResult={optimizationResult}
             initialSelectedDate={scheduleFocusDate}
-            onOpenProfileSettings={() => {
-              setProfileInitialTab('profile');
-              setIsProfileOpen(true);
-            }}
+            onOpenProfileSettings={() => openProfileModal('profile')}
           />
         )}
 
@@ -1613,10 +1653,7 @@ export default function App() {
           <div className="py-10 text-center space-y-4">
             <div className="flex flex-wrap items-center justify-center gap-3">
               <button
-                onClick={() => {
-                  setFocusTask(tasks.find((t) => t.status !== 'completed'));
-                  setIsFocusOpen(true);
-                }}
+                onClick={() => openFocusModal(tasks.find((t) => t.status !== 'completed'))}
                 className="px-8 py-4 rounded-3xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black text-lg shadow-xl shadow-amber-500/20 hover:scale-105 transition-transform cursor-pointer"
               >
                 🔥 دخول غرفة التركيز العميق الآن
@@ -1624,7 +1661,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setIsFocusOpen(false);
+                  closeAllModals();
                   setCurrentTab('dashboard');
                 }}
                 className="px-6 py-4 rounded-3xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-sm transition-all cursor-pointer"
@@ -1644,7 +1681,7 @@ export default function App() {
           if (currentTab === 'focus') setCurrentTab('dashboard');
         }}
         onReturnToDashboard={() => {
-          setIsFocusOpen(false);
+          closeAllModals();
           setCurrentTab('dashboard');
         }}
         initialTask={focusTask}
@@ -1671,15 +1708,8 @@ export default function App() {
         quranRoutine={quranRoutine}
         adhkarState={adhkarState}
         initialPrompt={chatInitialPrompt}
-        onStartFocus={(task) => {
-          setIsChatOpen(false);
-          setFocusTask(task);
-          setIsFocusOpen(true);
-        }}
-        onNavigateTab={(tab) => {
-          setIsChatOpen(false);
-          setCurrentTab(tab);
-        }}
+        onStartFocus={(task) => openFocusModal(task)}
+        onNavigateTab={handleNavigateTab}
         onAddExtractedTasks={handleAddExtracted}
         onAddGoal={handleAddGoal}
         onOptimizeSchedule={handleOptimizeSchedule}
@@ -1728,8 +1758,8 @@ export default function App() {
         cloudSyncStatus={cloudSyncStatus}
         lastSyncedAt={lastSyncedAt}
         authError={authError}
-        onSignIn={handleGoogleSignIn}
-        onSignOut={handleGoogleSignOut}
+        onSignIn={handleSignIn}
+        onSignOut={handleSignOut}
         onPushLocalToCloud={handlePushLocalToCloud}
         tasks={tasks}
         schedule={schedule}
@@ -1763,14 +1793,8 @@ export default function App() {
         onSaveBriefing={(briefing) =>
           setContextualBriefingsCache((prev) => ({ ...prev, [briefing.taskId]: briefing }))
         }
-        onStartFocus={(task) => {
-          setFocusTask(task);
-          setIsFocusOpen(true);
-        }}
-        onOpenBreakdown={(task) => {
-          setBreakdownTask(task);
-          setIsBreakdownOpen(true);
-        }}
+        onStartFocus={(task) => openFocusModal(task)}
+        onOpenBreakdown={(task) => openBreakdownModal(task)}
       />
 
       {/* Smart Floating Reminder Toasts */}
@@ -1779,10 +1803,7 @@ export default function App() {
         onDismissToast={handleDismissToast}
         onSnooze={handleSnoozeReminder}
         onComplete={handleCompleteReminder}
-        onStartFocus={(task) => {
-          setFocusTask(task);
-          setIsFocusOpen(true);
-        }}
+        onStartFocus={(task) => openFocusModal(task)}
         onReviewTomorrowSchedule={handleReviewTomorrowSchedule}
         onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
       />
@@ -1792,10 +1813,7 @@ export default function App() {
         <button
           type="button"
           id="fab-ai-assistant"
-          onClick={() => {
-            setChatInitialPrompt(undefined);
-            setIsChatOpen(true);
-          }}
+          onClick={() => openChatModal(undefined)}
           className="fixed bottom-24 left-4 md:bottom-6 md:left-6 z-30 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-emerald-600 hover:from-cyan-500 hover:via-indigo-500 hover:to-emerald-500 text-white font-bold text-xs shadow-xl shadow-cyan-500/25 border border-cyan-300/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
           title="التحدث مع المساعد الرقمي AI"
         >

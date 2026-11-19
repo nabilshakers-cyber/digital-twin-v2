@@ -217,15 +217,15 @@ export const AdhkarInteractiveModal: React.FC<AdhkarInteractiveModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-fadeIn"
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-hidden animate-fadeIn"
       onClick={onClose}
     >
       <div
-        className="bg-slate-900 border border-amber-500/35 rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl shadow-amber-500/10 overflow-hidden"
+        className="bg-slate-900 border border-amber-500/35 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl shadow-amber-500/10 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header (Athkari Style) */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 bg-gradient-to-r from-slate-900 via-amber-950/20 to-slate-900 shrink-0 space-y-3">
+        <div className="p-4 sm:p-5 border-b border-slate-800 bg-gradient-to-r from-slate-900 via-amber-950/20 to-slate-900 shrink-0 sticky top-0 z-20 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <div

@@ -26,7 +26,7 @@ import {
   BellRing,
   AlertTriangle,
 } from 'lucide-react';
-import type { User } from 'firebase/auth';
+import type { AppAuthUser } from '../firebase';
 import {
   CustomDashboardWidget,
   CustomWidgetColor,
@@ -38,6 +38,11 @@ import {
   TimeBlock,
 } from '../types';
 import { analyzeTomorrowEnergyLoad } from '../utils/burnoutEngine';
+import {
+  API_BASE_OVERRIDE_KEY,
+  isCapacitorNativeRuntime,
+  resolveApiBase,
+} from '../utils/api';
 
 interface TwinProfileModalProps {
   isOpen: boolean;
@@ -54,12 +59,12 @@ interface TwinProfileModalProps {
   onDeleteCustomWidget?: (widgetId: string) => void;
   onToggleWidgetVisibility?: (id: string) => void;
   initialTab?: 'profile' | 'widgets' | 'cloud' | 'android';
-  authUser?: User | null;
+  authUser?: AppAuthUser | null;
   authLoading?: boolean;
   cloudSyncStatus?: 'local' | 'syncing' | 'synced' | 'error';
   lastSyncedAt?: string | null;
   authError?: string | null;
-  onSignIn?: () => Promise<void>;
+  onSignIn?: (displayName?: string, email?: string, preferCloudPopup?: boolean) => Promise<void>;
   onSignOut?: () => Promise<void>;
   onPushLocalToCloud?: () => Promise<void>;
   tasks?: Task[];
@@ -145,9 +150,16 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
     { id: 'draft-1', text: '', done: false, url: '' },
   ]);
   const [widgetFeedback, setWidgetFeedback] = useState<string | null>(null);
+  const [localAuthName, setLocalAuthName] = useState<string>(profile.name || '');
+  const [localAuthEmail, setLocalAuthEmail] = useState<string>('');
+  const [apiBaseInput, setApiBaseInput] = useState<string>(() => resolveApiBase());
+  const [apiBaseSavedNotice, setApiBaseSavedNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    setLocalAuthName(profile.name || '');
+    setApiBaseInput(resolveApiBase());
+    setApiBaseSavedNotice(null);
     setSettingsTab(initialTab);
     setName(profile.name || '');
     setRole(profile.role || '');
@@ -291,47 +303,55 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-      <div className="w-full max-w-3xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative space-y-5 my-6">
-        {/* Close */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-5 left-5 p-2 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-100 transition-all cursor-pointer"
-          title="إغلاق الإعدادات"
-        >
-          <X className="w-5 h-5" />
-        </button>
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-hidden animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Sticky Header with Always-Visible Close (X) */}
+        <div className="shrink-0 sticky top-0 z-20 p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 shrink-0">
+              <Settings className="w-5 h-5 text-cyan-200" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-slate-100 truncate">
+                إعدادات التطبيق وتخصيص النسخة الرقمية
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-400 truncate">
+                إدارة شخصية التوأم الرقمي، النسخ الاحتياطي، المكونات المخصصة، والحساب المحلي
+              </p>
+            </div>
+          </div>
 
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 shrink-0">
-            <Settings className="w-6 h-6 text-cyan-200" />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-slate-100">
-              إعدادات التطبيق وتخصيص النسخة الرقمية
-            </h3>
-            <p className="text-xs text-slate-400">
-              إدارة شخصية التوأم الرقمي، النسخ الاحتياطي، وإنشاء وتعديل مكونات لوحة التحكم المخصصة
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="إغلاق الإعدادات"
+            className="shrink-0 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-all cursor-pointer"
+            title="إغلاق الإعدادات"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Settings Navigation Tabs */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+        <div className="shrink-0 px-4 sm:px-6 py-2.5 flex items-center gap-2 border-b border-slate-800 overflow-x-auto no-scrollbar bg-slate-900/70">
           <button
             type="button"
             id="settings-tab-profile"
             onClick={() => setSettingsTab('profile')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               settingsTab === 'profile'
                 ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/20'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
             }`}
           >
             <BrainCircuit className="w-4 h-4" />
-            <span>ملف التوأم والإعدادات العامة</span>
+            <span>ملف التوأم والإعدادات</span>
           </button>
 
           {onAddCustomWidget && (
@@ -339,14 +359,14 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
               type="button"
               id="settings-tab-widgets"
               onClick={() => setSettingsTab('widgets')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                 settingsTab === 'widgets'
                   ? 'bg-gradient-to-r from-emerald-600 to-cyan-600 text-white shadow-md shadow-emerald-600/20'
                   : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
               }`}
             >
               <LayoutGrid className="w-4 h-4" />
-              <span>إعدادات المكونات المخصصة</span>
+              <span>المكونات المخصصة</span>
               <span className="px-1.5 py-0.5 rounded-md bg-slate-950/50 text-[10px] font-mono">
                 {customWidgets.length}
               </span>
@@ -357,14 +377,14 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
             type="button"
             id="settings-tab-cloud"
             onClick={() => setSettingsTab('cloud')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               settingsTab === 'cloud'
                 ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-md shadow-indigo-600/20'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
             }`}
           >
             <Cloud className="w-4 h-4" />
-            <span>المزامنة السحابية</span>
+            <span>الحساب والمزامنة</span>
             {authUser && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
           </button>
 
@@ -372,16 +392,19 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
             type="button"
             id="settings-tab-android"
             onClick={() => setSettingsTab('android')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               settingsTab === 'android'
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/20'
                 : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
             }`}
           >
             <Smartphone className="w-4 h-4" />
-            <span>تطبيق أندرويد (Android)</span>
+            <span>تطبيق أندرويد</span>
           </button>
         </div>
+
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
 
         {/* TAB 1: Digital Twin Profile & Data Backup */}
         {settingsTab === 'profile' && (
@@ -697,7 +720,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
 
         {/* TAB 2: CustomDashboardWidget Studio (Create / Edit / Delete) */}
         {settingsTab === 'widgets' && (
-          <div className="space-y-5 max-h-[68vh] overflow-y-auto pr-1">
+          <div className="space-y-5">
             {widgetFeedback && (
               <div className="px-4 py-2.5 rounded-xl bg-emerald-950/70 border border-emerald-600/60 text-emerald-200 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -1099,9 +1122,9 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
           </div>
         )}
 
-        {/* TAB 3: Cloud Sync & Firebase Auth */}
+        {/* TAB 3: Account & Sync (In-App Local Auth + Optional Desktop Cloud Sync) */}
         {settingsTab === 'cloud' && (
-          <div className="space-y-4 max-h-[68vh] overflow-y-auto pr-1 text-xs">
+          <div className="space-y-4 text-xs">
             {authError && (
               <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/50 text-rose-200">
                 {authError}
@@ -1125,12 +1148,12 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                       </div>
                     )}
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h4 className="text-sm font-bold text-slate-100">
                           {authUser.displayName || 'مستخدم مسجل'}
                         </h4>
                         <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                          متصل بـ Firestore
+                          {authUser.mode === 'firebase' ? 'متصل بـ Firestore' : 'حساب محلي داخل التطبيق'}
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{authUser.email}</p>
@@ -1140,11 +1163,12 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                   {onSignOut && (
                     <button
                       type="button"
+                      id="btn-modal-signout"
                       onClick={onSignOut}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-200 border border-slate-700 text-xs font-bold cursor-pointer"
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-200 hover:text-rose-200 border border-slate-700 text-xs font-bold cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5" />
-                      <span>تسجيل الخروج</span>
+                      <span>تسجيل الخروج والعودة للرئيسية</span>
                     </button>
                   )}
                 </div>
@@ -1152,7 +1176,9 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                 <div className="p-4 rounded-2xl bg-slate-950/75 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-200 flex items-center gap-2">
-                      {cloudSyncStatus === 'syncing' ? (
+                      {authUser.mode === 'local' ? (
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      ) : cloudSyncStatus === 'syncing' ? (
                         <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
                       ) : cloudSyncStatus === 'error' ? (
                         <CloudOff className="w-4 h-4 text-rose-400" />
@@ -1160,24 +1186,25 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                         <Cloud className="w-4 h-4 text-emerald-400" />
                       )}
                       <span>
-                        حالة المزامنة اللحظية:{' '}
-                        {cloudSyncStatus === 'syncing'
-                          ? 'جارٍ المزامنة...'
+                        {authUser.mode === 'local'
+                          ? 'الحالة: مسجّل محلياً بأمان داخل التطبيق (بدون روابط خارجية)'
+                          : cloudSyncStatus === 'syncing'
+                          ? 'حالة المزامنة: جارٍ المزامنة...'
                           : cloudSyncStatus === 'error'
-                          ? 'يوجد خطأ في المزامنة'
-                          : 'محدّثة ومتزامنة عبر جميع أجهزتك'}
+                          ? 'حالة المزامنة: يوجد خطأ في المزامنة'
+                          : 'حالة المزامنة: محدّثة ومتزامنة مع السحابة'}
                       </span>
                     </span>
-                    {lastSyncedAt && (
+                    {lastSyncedAt && authUser.mode === 'firebase' && (
                       <span className="text-[11px] text-slate-400">آخر تحديث: {lastSyncedAt}</span>
                     )}
                   </div>
 
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    تتم مزامنة المهام، جدول الأعمال والتقويم (الهجري والميلادي)، إعدادات التوأم الرقمي، الأهداف، ورد القرآن والأذكار، المكونات المخصصة، وقوائم تطبيقات الهاتف فورياً مع Firebase Firestore مع حفظ نسخة محلية للعمل أوفلاين.
+                    جميع مهامك، جدول الأعمال والتقويم الهجري والميلادي، إعدادات التوأم الرقمي، الأهداف، ورد القرآن والأذكار، المكونات المخصصة، وقوائم تطبيقات الهاتف محفوظة محلياً فوراً على جهازك.
                   </p>
 
-                  {onPushLocalToCloud && (
+                  {onPushLocalToCloud && authUser.mode === 'firebase' && (
                     <div className="pt-1">
                       <button
                         type="button"
@@ -1193,29 +1220,68 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="p-6 rounded-2xl bg-slate-950/75 border border-slate-800 text-center space-y-4">
-                <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-indigo-600/30 to-cyan-500/30 border border-cyan-500/30 flex items-center justify-center text-cyan-300">
-                  <Cloud className="w-7 h-7" />
-                </div>
-                <div className="space-y-1.5 max-w-md mx-auto">
+              <div className="p-5 sm:p-6 rounded-2xl bg-slate-950/75 border border-slate-800 space-y-4">
+                <div className="text-center space-y-2">
+                  <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-tr from-indigo-600/30 to-cyan-500/30 border border-cyan-500/30 flex items-center justify-center text-cyan-300">
+                    <Cloud className="w-6 h-6" />
+                  </div>
                   <h4 className="text-sm font-bold text-slate-100">
-                    فعّل المزامنة السحابية بين هاتفك وحاسوبك
+                    تسجيل الدخول وإدارة الحساب داخل التطبيق
                   </h4>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    سجّل الدخول بحساب Google لحفظ ومزامنة مهامك، جدول التقويم الهجري والميلادي، وإعدادات التوأم الرقمي لحظياً عبر Firebase Firestore على جميع أجهزتك.
+                  <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">
+                    سجّل دخولك مباشرة داخل التطبيق دون فتح أي روابط خارجية أو صفحات متصفح منفصلة، مع حفظ جلستك وبياناتك محلياً بأمان.
                   </p>
                 </div>
-                {onSignIn && (
-                  <button
-                    type="button"
-                    disabled={authLoading}
-                    onClick={onSignIn}
-                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-cyan-600/20 cursor-pointer disabled:opacity-50"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span>{authLoading ? 'جارٍ تسجيل الدخول...' : 'تسجيل الدخول بحساب Google'}</span>
-                  </button>
-                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto">
+                  <input
+                    type="text"
+                    value={localAuthName}
+                    onChange={(e) => setLocalAuthName(e.target.value)}
+                    placeholder="الاسم المعروض في التطبيق"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                  <input
+                    type="email"
+                    value={localAuthEmail}
+                    onChange={(e) => setLocalAuthEmail(e.target.value)}
+                    placeholder="البريد الإلكتروني (اختياري)"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-2.5">
+                  {onSignIn && (
+                    <button
+                      type="button"
+                      id="btn-local-inapp-signin"
+                      disabled={authLoading}
+                      onClick={() =>
+                        onSignIn(
+                          localAuthName.trim() || profile.name || 'مستخدم التوأم الرقمي',
+                          localAuthEmail.trim() || undefined,
+                          false
+                        )
+                      }
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-cyan-600/20 cursor-pointer disabled:opacity-50"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      <span>{authLoading ? 'جارٍ تسجيل الدخول...' : 'تسجيل الدخول داخل التطبيق'}</span>
+                    </button>
+                  )}
+
+                  {onSignIn && !isCapacitorNativeRuntime() && (
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={() => onSignIn(undefined, undefined, true)}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      <Cloud className="w-4 h-4 text-cyan-300" />
+                      <span>مزامنة Google السحابية (للويب)</span>
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1223,7 +1289,52 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
 
         {/* TAB 4: Android Conversion & APK Setup */}
         {settingsTab === 'android' && (
-          <div className="space-y-4 max-h-[68vh] overflow-y-auto pr-1 text-xs">
+          <div className="space-y-4 text-xs">
+            <div className="p-4 rounded-2xl bg-slate-950/75 border border-slate-800 space-y-2.5">
+              <div className="flex items-center gap-2 text-cyan-300 font-bold text-sm">
+                <Cloud className="w-4 h-4" />
+                <span>عنوان خادم المساعد الذكي لتطبيق Android</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                يستخدم تطبيق Capacitor عنوان الخادم التالي للاتصال بنظام Gemini API. يمكنك تعديله إذا قمت باستضافة الخادم على نطاق آخر:
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="url"
+                  dir="ltr"
+                  value={apiBaseInput}
+                  onChange={(e) => setApiBaseInput(e.target.value)}
+                  placeholder="https://your-server-url.run.app"
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-cyan-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      if (apiBaseInput.trim()) {
+                        localStorage.setItem(
+                          API_BASE_OVERRIDE_KEY,
+                          apiBaseInput.trim().replace(/\/$/, '')
+                        );
+                      } else {
+                        localStorage.removeItem(API_BASE_OVERRIDE_KEY);
+                      }
+                      setApiBaseInput(resolveApiBase());
+                      setApiBaseSavedNotice('تم حفظ عنوان الخادم بنجاح');
+                    } catch {
+                      setApiBaseSavedNotice('تعذر حفظ العنوان');
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold cursor-pointer shrink-0"
+                >
+                  حفظ الرابط
+                </button>
+              </div>
+              {apiBaseSavedNotice && (
+                <p className="text-[11px] text-emerald-300 font-semibold">{apiBaseSavedNotice}</p>
+              )}
+            </div>
+
             <div className="p-4 rounded-2xl bg-emerald-950/30 border border-emerald-700/40 space-y-2.5">
               <div className="flex items-center gap-2 text-emerald-300 font-bold text-sm">
                 <ShieldCheck className="w-5 h-5" />
@@ -1235,7 +1346,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
               <ol className="list-decimal list-inside space-y-1.5 text-slate-300 pt-1">
                 <li>افتح رابط التطبيق في متصفح <strong>Chrome</strong> على هاتفك الأندرويد.</li>
                 <li>اضغط على زر <strong>«تثبيت على أندرويد»</strong> في الشريط العلوي أو من قائمة Chrome <strong>⋮</strong> اختر <strong>«تثبيت التطبيق»</strong>.</li>
-                <li>سيُثبَّت التطبيق مباشرة على شاشة هاتفك كأيقونة أصلية مع دعم الإشعارات وفتح تطبيقات الهاتف.</li>
+                <li>سيُثبَّت التطبيق مباشرة على شاشة هاتفك كأيقونة أصلية مع دعم الإشعارات والميكروفون.</li>
               </ol>
             </div>
 
@@ -1257,6 +1368,7 @@ npx cap open android`}
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
