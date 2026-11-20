@@ -20,7 +20,9 @@ import {
   ArrowRight,
   Home,
   BookOpen,
-  Square
+  Square,
+  Clock,
+  Check
 } from 'lucide-react';
 import { Task, DigitalTwinProfile } from '../types';
 import {
@@ -39,6 +41,7 @@ interface FocusModeModalProps {
   initialTask?: Task;
   tasks: Task[];
   profile: DigitalTwinProfile;
+  onUpdateProfile: (profile: DigitalTwinProfile) => void;
   onToggleSubtask: (taskId: string, subtaskId: string) => void;
   onCompleteTask: (taskId: string) => void;
   autoDndEnabled: boolean;
@@ -47,6 +50,20 @@ interface FocusModeModalProps {
   onFocusRunningChange: (isRunning: boolean) => void;
 }
 
+const FOCUS_DURATION_PRESETS = [
+  { minutes: 15, label: 'سريع' },
+  { minutes: 25, label: 'بومودورو' },
+  { minutes: 45, label: 'عميق' },
+  { minutes: 60, label: 'ساعة' },
+  { minutes: 90, label: 'مكثف' },
+];
+
+const clampFocusMinutes = (val: unknown): number => {
+  const n = Math.round(Number(val));
+  if (!Number.isFinite(n) || n < 5) return 25;
+  return Math.min(180, n);
+};
+
 export const FocusModeModal: React.FC<FocusModeModalProps> = ({
   isOpen,
   onClose,
@@ -54,6 +71,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
   initialTask,
   tasks,
   profile,
+  onUpdateProfile,
   onToggleSubtask,
   onCompleteTask,
   autoDndEnabled,
@@ -61,11 +79,18 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
   isDndActive,
   onFocusRunningChange,
 }) => {
+  const savedFocusMinutes = useMemo(
+    () => clampFocusMinutes(profile.focusSessionMinutes ?? 25),
+    [profile.focusSessionMinutes]
+  );
   const [selectedTask, setSelectedTask] = useState<Task | undefined>(initialTask);
-  const [minutes, setMinutes] = useState(25);
+  const [minutes, setMinutes] = useState(savedFocusMinutes);
   const [seconds, setSeconds] = useState(0);
   const [isActive, setIsActive] = useState(false);
   const [mode, setMode] = useState<'focus' | 'short_break' | 'long_break'>('focus');
+  const [isDurationSettingsOpen, setIsDurationSettingsOpen] = useState(false);
+  const [customMinutesInput, setCustomMinutesInput] = useState<string>(String(savedFocusMinutes));
+  const [durationSavedNotice, setDurationSavedNotice] = useState<boolean>(false);
   const [ambientType, setAmbientType] = useState<'none' | 'whitenoise' | 'rain' | 'binaural' | 'quran'>('none');
   const [quranSurah, setQuranSurah] = useState<number>(55);
   const [quranReciter, setQuranReciter] = useState<QuranReciterPreset['id']>('ar.alafasy');
@@ -80,6 +105,16 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
       setSelectedTask(tasks.find((t) => t.status !== 'completed') || tasks[0]);
     }
   }, [initialTask, tasks]);
+
+  // Sync timer duration from saved profile preference when opening or changing preference while idle
+  useEffect(() => {
+    if (!isOpen) return;
+    setCustomMinutesInput(String(savedFocusMinutes));
+    if (!isActive && mode === 'focus') {
+      setMinutes(savedFocusMinutes);
+      setSeconds(0);
+    }
+  }, [isOpen, savedFocusMinutes]);
 
   // Timer logic
   useEffect(() => {
@@ -103,7 +138,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
             setSeconds(0);
           } else {
             setMode('focus');
-            setMinutes(25);
+            setMinutes(savedFocusMinutes);
             setSeconds(0);
           }
         }
@@ -113,7 +148,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
     }
 
     return () => clearInterval(interval);
-  }, [isActive, minutes, seconds, mode]);
+  }, [isActive, minutes, seconds, mode, savedFocusMinutes]);
 
   // Ambient sound handler
   const handleToggleAmbient = (type: 'whitenoise' | 'rain' | 'binaural' | 'quran') => {
@@ -155,7 +190,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
     setIsActive(false);
     setMode(newMode);
     if (newMode === 'focus') {
-      setMinutes(25);
+      setMinutes(savedFocusMinutes);
       setSeconds(0);
     } else if (newMode === 'short_break') {
       setMinutes(5);
@@ -164,6 +199,23 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
       setMinutes(15);
       setSeconds(0);
     }
+  };
+
+  const handleSaveFocusDuration = (rawMinutes: number) => {
+    const nextMinutes = Math.max(5, Math.min(180, Math.round(rawMinutes) || 25));
+    setCustomMinutesInput(String(nextMinutes));
+    setIsActive(false);
+    setMode('focus');
+    setMinutes(nextMinutes);
+    setSeconds(0);
+    onUpdateProfile({
+      ...profile,
+      focusSessionMinutes: nextMinutes,
+    });
+    setDurationSavedNotice(true);
+    setTimeout(() => {
+      setDurationSavedNotice(false);
+    }, 2500);
   };
 
   // Notify parent when focus session timer is actively running inside the Focus Room
@@ -211,7 +263,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
     soundEngine.playChime(true);
     setAmbientType('none');
     setIsActive(false);
-    setMinutes(mode === 'focus' ? 25 : mode === 'short_break' ? 5 : 15);
+    setMinutes(mode === 'focus' ? savedFocusMinutes : mode === 'short_break' ? 5 : 15);
     setSeconds(0);
     onFocusRunningChange(false);
     if (onReturnToDashboard) {
@@ -223,13 +275,13 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
 
   const activeQuote = useMemo(() => {
     const twinFocusQuotes = [
-      `يا ${profile.name || 'صديقي'}، التركيز لمدة 25 دقيقة دون تفقد الإشعارات يعادل 3 ساعات من العمل المشتت.`,
+      `يا ${profile.name || 'صديقي'}، التركيز لمدة ${savedFocusMinutes} دقيقة دون تفقد الإشعارات يعادل ساعات من العمل المشتت.`,
       'العقل لا ينجز مهمتين عميقتين في نفس الوقت. مهمة واحدة الآن بكل ما أوتيت من عزيمة.',
       'التسويف ينكسر عند أول دقيقتين من البدء الفعلي. ابدأ بالخطوة الأولى البسيطة.',
       'أنا هنا أراقب إنجازك، اجعل تركيزك اليوم مضرب المثل.',
     ];
     return twinFocusQuotes[Math.floor(Math.random() * twinFocusQuotes.length)];
-  }, [isOpen, profile.name]);
+  }, [isOpen, profile.name, savedFocusMinutes]);
 
   useModalScrollLock('focus-modal', isOpen);
 
@@ -318,9 +370,10 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
           </div>
         </div>
 
-        {/* Mode Selector (Focus vs Breaks) */}
-        <div className="flex items-center justify-center gap-2 mt-6">
+        {/* Mode Selector (Focus vs Breaks) + Duration Customizer Toggle */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-6">
           <button
+            type="button"
             onClick={() => switchMode('focus')}
             className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               mode === 'focus'
@@ -328,9 +381,10 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
                 : 'bg-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
-            جلسة تركيز (25 د)
+            جلسة تركيز ({savedFocusMinutes} د)
           </button>
           <button
+            type="button"
             onClick={() => switchMode('short_break')}
             className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               mode === 'short_break'
@@ -341,6 +395,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
             استراحة قصيرة (5 د)
           </button>
           <button
+            type="button"
             onClick={() => switchMode('long_break')}
             className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               mode === 'long_break'
@@ -350,7 +405,97 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
           >
             استراحة طويلة (15 د)
           </button>
+          <button
+            type="button"
+            id="btn-focus-duration-settings"
+            onClick={() => setIsDurationSettingsOpen((v) => !v)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+              isDurationSettingsOpen
+                ? 'bg-amber-500/15 border-amber-500/70 text-amber-200'
+                : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
+            }`}
+            title="تخصيص مدة جلسة التركيز وحفظها في الملف الشخصي"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>تخصيص المدة</span>
+          </button>
         </div>
+
+        {/* Custom Focus Session Duration Settings Panel */}
+        {isDurationSettingsOpen && (
+          <div
+            id="focus-duration-settings-panel"
+            className="mt-4 p-4 rounded-2xl bg-slate-900/90 border border-amber-500/30 space-y-3 animate-fadeIn"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-200">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span>تخصيص مدة جلسة التركيز (تُحفظ تلقائياً للجلسات القادمة)</span>
+              </div>
+              {durationSavedNotice && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-300 bg-emerald-950/70 border border-emerald-700/60 px-2.5 py-0.5 rounded-lg">
+                  <Check className="w-3.5 h-3.5" />
+                  <span>تم الحفظ في الملف الشخصي ({savedFocusMinutes} د)</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {FOCUS_DURATION_PRESETS.map((preset) => {
+                const isSelected = savedFocusMinutes === preset.minutes;
+                return (
+                  <button
+                    key={preset.minutes}
+                    type="button"
+                    id={`btn-focus-preset-${preset.minutes}`}
+                    onClick={() => handleSaveFocusDuration(preset.minutes)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                        : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
+                    }`}
+                  >
+                    {preset.minutes} د ({preset.label})
+                  </button>
+                );
+              })}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const parsed = Number(customMinutesInput);
+                if (!Number.isFinite(parsed)) return;
+                handleSaveFocusDuration(parsed);
+              }}
+              className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/80"
+            >
+              <label
+                htmlFor="input-custom-focus-minutes"
+                className="text-[11px] font-semibold text-slate-300"
+              >
+                مدة مخصصة (5 - 180 دقيقة):
+              </label>
+              <input
+                id="input-custom-focus-minutes"
+                type="number"
+                min={5}
+                max={180}
+                value={customMinutesInput}
+                onChange={(e) => setCustomMinutesInput(e.target.value)}
+                className="w-24 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-mono text-amber-200 focus:outline-none focus:border-amber-500"
+              />
+              <button
+                type="submit"
+                id="btn-save-custom-focus-minutes"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-colors cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>تطبيق وحفظ</span>
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Giant Timer Display */}
         <div className="my-8 text-center">
@@ -388,7 +533,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
               type="button"
               onClick={() => {
                 setIsActive(false);
-                setMinutes(mode === 'focus' ? 25 : mode === 'short_break' ? 5 : 15);
+                setMinutes(mode === 'focus' ? savedFocusMinutes : mode === 'short_break' ? 5 : 15);
                 setSeconds(0);
               }}
               className="p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all cursor-pointer"

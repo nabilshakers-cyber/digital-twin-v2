@@ -21,10 +21,11 @@ import {
   PhoneAppShortcut
 } from './types';
 import { DEFAULT_DASHBOARD_LAYOUT, INITIAL_PHONE_APP_LISTS } from './data/dashboardDefaults';
-import { Navbar } from './components/Navbar';
+import { Navbar, type AppNavTab } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { TasksHubView } from './components/TasksHubView';
 import { ScheduleView } from './components/ScheduleView';
+import { NotificationsView } from './components/NotificationsView';
 import { FocusModeModal } from './components/FocusModeModal';
 import { TwinChatDrawer } from './components/TwinChatDrawer';
 import { SmartQuickAddModal } from './components/SmartQuickAddModal';
@@ -36,6 +37,7 @@ import { SmartReminderToasts } from './components/SmartReminderToasts';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { classifyTasksWithAI, optimizeScheduleWithAI } from './utils/api';
 import { soundEngine } from './utils/audioSynth';
+import { playToneForReminder } from './utils/notificationTones';
 import { broadcastCloseAllModals, useModalCloseListener } from './utils/modalCoordinator';
 import {
   cancelReminder,
@@ -243,8 +245,23 @@ export default function App() {
     }
   });
 
-  // 2. Navigation Tab state
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'tasks' | 'schedule' | 'focus'>('dashboard');
+  // 2. Navigation Tab state (synced with URL hash routes e.g. #/notifications)
+  const parseTabFromHash = (): AppNavTab => {
+    if (typeof window === 'undefined') return 'dashboard';
+    const raw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
+    if (
+      raw === 'tasks' ||
+      raw === 'schedule' ||
+      raw === 'focus' ||
+      raw === 'notifications' ||
+      raw === 'dashboard'
+    ) {
+      return raw;
+    }
+    return 'dashboard';
+  };
+
+  const [currentTab, setCurrentTab] = useState<AppNavTab>(() => parseTabFromHash());
   const [scheduleFocusDate, setScheduleFocusDate] = useState<string | undefined>();
 
   // 3. Modals & Overlays
@@ -590,13 +607,32 @@ export default function App() {
     setIsContextualBriefingOpen(true);
   };
 
-  const handleNavigateTab = (tab: 'dashboard' | 'tasks' | 'schedule' | 'focus') => {
+  const handleNavigateTab = (tab: AppNavTab) => {
     closeAllModals();
     if (tab === 'focus') {
       setIsFocusOpen(true);
     }
     setCurrentTab(tab);
+    if (typeof window !== 'undefined') {
+      const targetHash = `#/${tab}`;
+      if (window.location.hash !== targetHash) {
+        window.location.hash = targetHash;
+      }
+    }
   };
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const tabFromHash = parseTabFromHash();
+      closeAllModals();
+      if (tabFromHash === 'focus') {
+        setIsFocusOpen(true);
+      }
+      setCurrentTab(tabFromHash);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const handleSignIn = async (
     displayName?: string,
@@ -700,7 +736,7 @@ export default function App() {
         );
       }
       if (soundEnabled) {
-        soundEngine.playChime(primary.urgency !== 'overdue' && primary.urgency !== 'energy_warning');
+        playToneForReminder(primary);
       }
     }
   }, [smartReminders, pushEnabled, pushPermission, soundEnabled, isDndActive]);
@@ -978,6 +1014,45 @@ export default function App() {
     setSchedule((prev) => prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b)));
     soundEngine.playChime(true);
     void runCloudMutation((uid) => upsertScheduleBlockDoc(uid, updatedBlock, false));
+  };
+
+  const handleApplyGoogleCalendarSync = ({
+    importedBlocks,
+    updatedLocalBlocks,
+    linkedResults = [],
+  }: {
+    importedBlocks: TimeBlock[];
+    updatedLocalBlocks: TimeBlock[];
+    linkedResults?: { blockId: string; googleEventId: string; updated?: string }[];
+  }) => {
+    const updatedMap = new Map(updatedLocalBlocks.map((b) => [b.id, b]));
+    const linkMap = new Map(linkedResults.map((l) => [l.blockId, l]));
+
+    setSchedule((prev) => {
+      const next = prev.map((b) => {
+        const updated = updatedMap.get(b.id);
+        const link = linkMap.get(b.id);
+        const merged = updated ? { ...updated } : { ...b };
+        if (link) {
+          merged.googleEventId = link.googleEventId;
+          if (link.updated) merged.googleCalendarUpdated = link.updated;
+        }
+        return merged;
+      });
+      return [...next, ...importedBlocks];
+    });
+
+    if (importedBlocks.length > 0 || updatedLocalBlocks.length > 0) {
+      soundEngine.playChime(true);
+      void runCloudMutation(async (uid) => {
+        for (const b of importedBlocks) {
+          await upsertScheduleBlockDoc(uid, b, true);
+        }
+        for (const b of updatedLocalBlocks) {
+          await upsertScheduleBlockDoc(uid, b, false);
+        }
+      });
+    }
   };
 
   // AI Auto-Schedule Optimizer
@@ -1533,7 +1608,7 @@ export default function App() {
       sendBrowserNotification('🔔 تنبيه تجريبي ذكي', testReminder.title, testId);
     }
     if (soundEnabled) {
-      soundEngine.playChime(true);
+      playToneForReminder(testReminder);
     }
   };
 
@@ -1554,7 +1629,7 @@ export default function App() {
       );
     }
     if (soundEnabled) {
-      soundEngine.playChime(!analysis.isOverloaded);
+      playToneForReminder(reminder);
     }
   };
 
@@ -1717,6 +1792,44 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'notifications' && (
+          <NotificationsView
+            reminders={smartReminders}
+            pushPermission={pushPermission}
+            pushEnabled={pushEnabled}
+            soundEnabled={soundEnabled}
+            onEnablePush={handleEnablePush}
+            onTogglePushEnabled={() => {
+              const next = !pushEnabled;
+              setPushEnabled(next);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { pushEnabled: next }));
+            }}
+            onToggleSound={() => {
+              const next = !soundEnabled;
+              setSoundEnabled(next);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { soundEnabled: next }));
+            }}
+            onTestAlert={handleTestAlert}
+            onCompleteReminder={handleCompleteReminder}
+            onSnoozeReminder={handleSnoozeReminder}
+            onDismissReminder={handleDismissReminder}
+            onStartFocus={(task) => openFocusModal(task)}
+            isDndActive={isDndActive}
+            autoDndEnabled={autoDndEnabled}
+            manualDnd={manualDnd}
+            onToggleAutoDnd={() => {
+              const next = !autoDndEnabled;
+              setAutoDndEnabled(next);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { autoDndEnabled: next }));
+            }}
+            onToggleManualDnd={() => setManualDnd((v) => !v)}
+            onReviewTomorrowSchedule={handleReviewTomorrowSchedule}
+            onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
+            onCheckTomorrowEnergy={() => handleTriggerTomorrowEnergyCheck()}
+            onBackToDashboard={() => handleNavigateTab('dashboard')}
+          />
+        )}
+
         {currentTab === 'focus' && (
           <div className="py-10 text-center space-y-4">
             <div className="flex flex-wrap items-center justify-center gap-3">
@@ -1755,6 +1868,10 @@ export default function App() {
         initialTask={focusTask}
         tasks={tasks}
         profile={profile}
+        onUpdateProfile={(newProf) => {
+          setProfile(newProf);
+          void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: newProf }));
+        }}
         onToggleSubtask={handleToggleSubtask}
         onCompleteTask={(taskId) => {
           handleToggleTask(taskId);
@@ -1832,6 +1949,13 @@ export default function App() {
         tasks={tasks}
         schedule={schedule}
         onTriggerTomorrowEnergyCheck={handleTriggerTomorrowEnergyCheck}
+        onApplyCalendarSync={handleApplyGoogleCalendarSync}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => {
+          const next = !soundEnabled;
+          setSoundEnabled(next);
+          void runCloudMutation((uid) => syncWorkspaceFields(uid, { soundEnabled: next }));
+        }}
       />
 
       {/* Morning Kickoff & Evening Debrief Modal */}

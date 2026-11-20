@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { LocalNotifications, type Schedule } from '@capacitor/local-notifications';
+import { playToneForLocalCategory } from './notificationTones';
 
 export type ReminderItemCategory = 'quran' | 'adhkar' | 'task';
 
@@ -145,6 +146,15 @@ function registerWebFallbackTimer(reminder: ScheduledLocalReminder): void {
       }
     }
 
+    try {
+      const soundPref = localStorage.getItem('digital_twin_sound_enabled_v1');
+      if (soundPref !== 'false') {
+        playToneForLocalCategory(reminder.category);
+      }
+    } catch {
+      playToneForLocalCategory(reminder.category);
+    }
+
     if (reminder.repeatDaily) {
       const nextDate = new Date(targetMs + 24 * 60 * 60 * 1000);
       const nextReminder: ScheduledLocalReminder = {
@@ -248,6 +258,16 @@ export async function initializeLocalNotifications(): Promise<void> {
     try {
       await LocalNotifications.addListener('localNotificationReceived', (notification) => {
         const itemKey = notification.extra?.itemKey as string | undefined;
+        const notifCategory =
+          (notification.extra?.category as ReminderItemCategory | undefined) || 'task';
+        try {
+          const soundPref = localStorage.getItem('digital_twin_sound_enabled_v1');
+          if (soundPref !== 'false') {
+            playToneForLocalCategory(notifCategory);
+          }
+        } catch {
+          // ignore sound playback failure
+        }
         if (!itemKey) return;
         const map = readStoredReminders();
         const entry = map[itemKey];

@@ -44,6 +44,8 @@ import {
   resolveApiBase,
 } from '../utils/api';
 import { useModalScrollLock } from '../utils/modalCoordinator';
+import { GoogleCalendarSyncCard } from './GoogleCalendarSyncCard';
+import { CategoryTonesCustomizer } from './CategoryTonesCustomizer';
 
 interface TwinProfileModalProps {
   isOpen: boolean;
@@ -71,6 +73,13 @@ interface TwinProfileModalProps {
   tasks?: Task[];
   schedule?: TimeBlock[];
   onTriggerTomorrowEnergyCheck?: (overrideProfile?: DigitalTwinProfile) => void;
+  onApplyCalendarSync?: (payload: {
+    importedBlocks: TimeBlock[];
+    updatedLocalBlocks: TimeBlock[];
+    linkedResults?: { blockId: string; googleEventId: string; updated?: string }[];
+  }) => void;
+  soundEnabled?: boolean;
+  onToggleSound?: () => void;
 }
 
 const ICONS = ['🧩', '📝', '✅', '📊', '🔥', '📚', '🌿', '⚡', '🕌', '💼', '🎯', '💡'];
@@ -108,6 +117,9 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
   tasks = [],
   schedule = [],
   onTriggerTomorrowEnergyCheck,
+  onApplyCalendarSync,
+  soundEnabled = true,
+  onToggleSound,
 }) => {
   const [settingsTab, setSettingsTab] = useState<'profile' | 'widgets' | 'cloud' | 'android'>(
     initialTab
@@ -657,6 +669,21 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                 );
               })()}
             </div>
+
+            {/* Google Calendar Sync Settings Card */}
+            {onApplyCalendarSync && (
+              <GoogleCalendarSyncCard
+                schedule={schedule}
+                onApplyCalendarSync={onApplyCalendarSync}
+                buttonId="btn-sync-google-calendar"
+              />
+            )}
+
+            {/* Category Alert Tones Customizer */}
+            <CategoryTonesCustomizer
+              soundEnabled={soundEnabled}
+              onEnableSound={soundEnabled ? undefined : onToggleSound}
+            />
 
             {/* Backup / Export / Reset bar */}
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1286,6 +1313,15 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                   )}
                 </div>
               </div>
+            )}
+
+            {/* Google Calendar GIS Integration inside Sync Tab */}
+            {onApplyCalendarSync && (
+              <GoogleCalendarSyncCard
+                schedule={schedule}
+                onApplyCalendarSync={onApplyCalendarSync}
+                buttonId="btn-sync-google-calendar-cloud"
+              />
             )}
           </div>
         )}

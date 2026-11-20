@@ -76,6 +76,8 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>(() => [buildInitialMessage()]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingElapsedSec, setLoadingElapsedSec] = useState(0);
+  const [isWakingServer, setIsWakingServer] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   // Voice Note Recording State
@@ -91,6 +93,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
   const cancelRecordingRef = useRef<boolean>(false);
   const recordingDurationRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeRequestAbortRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -103,14 +106,34 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isProcessingVoice]);
+  }, [messages, isLoading, isProcessingVoice]);
 
-  // Clean up mic stream if drawer closes
+  // Track elapsed waiting seconds (up to 60s) while connecting/waking up server
+  useEffect(() => {
+    if (!isLoading && !isProcessingVoice) {
+      setLoadingElapsedSec(0);
+      setIsWakingServer(false);
+      return;
+    }
+    setLoadingElapsedSec(0);
+    const interval = setInterval(() => {
+      setLoadingElapsedSec((prev) => (prev < 60 ? prev + 1 : 60));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isLoading, isProcessingVoice]);
+
+  // Clean up mic stream & in-flight requests
   useEffect(() => {
     if (!isOpen && isRecording) {
       cancelRecording();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      activeRequestAbortRef.current?.abort();
+    };
+  }, []);
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend || inputText;
@@ -126,19 +149,34 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
     setIsLoading(true);
+    setIsWakingServer(false);
+
+    activeRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestAbortRef.current = controller;
 
     try {
-      const result = await askDigitalAssistant({
-        message: userMsg.content,
-        history: messages,
-        profile,
-        tasks,
-        schedule,
-        goals,
-        quranRoutine,
-        adhkarState,
-        currentDate: new Date().toISOString(),
-      });
+      const result = await askDigitalAssistant(
+        {
+          message: userMsg.content,
+          history: messages,
+          profile,
+          tasks,
+          schedule,
+          goals,
+          quranRoutine,
+          adhkarState,
+          currentDate: new Date().toISOString(),
+        },
+        {
+          timeoutMs: 60_000,
+          retryOnColdStart: true,
+          signal: controller.signal,
+          onWaitingForWakeup: () => {
+            setIsWakingServer(true);
+          },
+        }
+      );
 
       const twinMsg: ChatMessage = {
         id: `t-${Date.now()}`,
@@ -158,6 +196,9 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
 
       setMessages((prev) => [...prev, twinMsg]);
     } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -170,7 +211,11 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
         },
       ]);
     } finally {
+      if (activeRequestAbortRef.current === controller) {
+        activeRequestAbortRef.current = null;
+      }
       setIsLoading(false);
+      setIsWakingServer(false);
     }
   };
 
@@ -220,20 +265,35 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
 
   const handleAudioBlobSubmit = async (blob: Blob, durationSec: number) => {
     setIsProcessingVoice(true);
+    setIsWakingServer(false);
     setVoiceError(null);
+
+    activeRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestAbortRef.current = controller;
 
     try {
       const audioBase64 = await blobToBase64(blob);
       const mimeType = blob.type || 'audio/webm';
 
-      const result = await processVoiceNoteWithAI({
-        audioBase64,
-        mimeType,
-        profile,
-        tasks,
-        schedule,
-        currentDate: new Date().toISOString(),
-      });
+      const result = await processVoiceNoteWithAI(
+        {
+          audioBase64,
+          mimeType,
+          profile,
+          tasks,
+          schedule,
+          currentDate: new Date().toISOString(),
+        },
+        {
+          timeoutMs: 60_000,
+          retryOnColdStart: true,
+          signal: controller.signal,
+          onWaitingForWakeup: () => {
+            setIsWakingServer(true);
+          },
+        }
+      );
 
       const nowTime = new Date().toLocaleTimeString('ar-SA', {
         hour: '2-digit',
@@ -263,9 +323,16 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
 
       setMessages((prev) => [...prev, userVoiceMsg, twinAnalysisMsg]);
     } catch (err: any) {
+      if (err?.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
       setVoiceError(err.message || 'تعذر تحويل الملاحظة الصوتية، يرجى المحاولة مرة أخرى.');
     } finally {
+      if (activeRequestAbortRef.current === controller) {
+        activeRequestAbortRef.current = null;
+      }
       setIsProcessingVoice(false);
+      setIsWakingServer(false);
     }
   };
 
@@ -408,6 +475,11 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
   };
 
   const handleResetChat = () => {
+    activeRequestAbortRef.current?.abort();
+    activeRequestAbortRef.current = null;
+    setIsLoading(false);
+    setIsProcessingVoice(false);
+    setIsWakingServer(false);
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
@@ -462,7 +534,9 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
                 </span>
               </h3>
               <p className="text-[11px] text-emerald-400 font-medium truncate">
-                تحليل المهام • جدولة ذكية • صوت ونص
+                {isLoading || isProcessingVoice
+                  ? 'جاري الاتصال بالمساعد...'
+                  : 'تحليل المهام • جدولة ذكية • صوت ونص'}
               </p>
             </div>
           </div>
@@ -493,8 +567,10 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
           {quickPrompts.map((prompt, idx) => (
             <button
               key={idx}
+              type="button"
+              disabled={isLoading || isProcessingVoice}
               onClick={() => handleSendMessage(prompt)}
-              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 border border-slate-700/80 text-[11px] font-medium whitespace-nowrap transition-all cursor-pointer"
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 hover:text-cyan-300 border border-slate-700/80 text-[11px] font-medium whitespace-nowrap transition-all cursor-pointer"
             >
               {prompt}
             </button>
@@ -711,17 +787,38 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
           })}
 
           {(isLoading || isProcessingVoice) && (
-            <div className="flex gap-3 items-start">
-              <div className="w-7 h-7 rounded-lg bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center justify-center">
-                <Bot className="w-4 h-4" />
+            <div className="flex gap-3 items-start" role="status" aria-live="polite">
+              <div className="w-7 h-7 rounded-lg bg-cyan-950 text-cyan-400 border border-cyan-800 flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4 animate-pulse" />
               </div>
-              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3.5 text-xs text-slate-400 flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-400" />
-                <span>
-                  {isProcessingVoice
-                    ? 'جاري تحويل التسجيل الصوتي إلى نص وتلخيص المهام...'
-                    : 'نسختك الرقمية تفكر وتحلل جدولك...'}
-                </span>
+              <div className="bg-slate-950 border border-cyan-900/60 rounded-2xl p-3.5 text-xs text-slate-200 space-y-2 max-w-[85%] shadow-md">
+                <div className="flex items-center gap-2 font-semibold text-cyan-300">
+                  <Loader2 className="w-4 h-4 animate-spin text-cyan-400 shrink-0" />
+                  <span>
+                    {isProcessingVoice
+                      ? 'جاري الاتصال بالمساعد وتحليل الملاحظة الصوتية...'
+                      : 'جاري الاتصال بالمساعد...'}
+                  </span>
+                </div>
+
+                {(isWakingServer || loadingElapsedSec >= 3) && (
+                  <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      {isWakingServer
+                        ? 'الخادم قيد الاستيقاظ من وضع السكون، ننتظر الاستجابة تلقائياً...'
+                        : 'يرجى الانتظار، قد يستغرق إيقاظ الخادم حتى 60 ثانية.'}
+                      <span className="inline-block mr-1.5 font-mono text-cyan-400 font-bold">
+                        ({loadingElapsedSec} / 60 ث)
+                      </span>
+                    </p>
+                    <div className="w-full h-1 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((loadingElapsedSec / 60) * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -830,8 +927,13 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
               type="submit"
               disabled={!inputText.trim() || isLoading || isProcessingVoice}
               className="p-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white transition-all cursor-pointer"
+              title={isLoading || isProcessingVoice ? 'جاري الاتصال بالمساعد...' : 'إرسال'}
             >
-              <Send className="w-4 h-4 rotate-180" />
+              {isLoading || isProcessingVoice ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4 rotate-180" />
+              )}
             </button>
           </form>
         )}

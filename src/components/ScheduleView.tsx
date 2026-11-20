@@ -290,6 +290,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             <Plus className="w-4 h-4 text-cyan-400" />
             <span className="hidden sm:inline">إضافة موعد/بلوك</span>
           </button>
+
+          {onOpenProfileSettings && (
+            <button
+              type="button"
+              onClick={onOpenProfileSettings}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-700/50 text-xs font-semibold cursor-pointer"
+              title="فتح إعدادات مزامنة تقويم Google"
+            >
+              <Calendar className="w-4 h-4" />
+              <span className="hidden lg:inline">مزامنة Google</span>
+            </button>
+          )}
         </div>
       </div>
 

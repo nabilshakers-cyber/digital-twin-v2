@@ -97,6 +97,9 @@ function sanitizeProfile(p: DigitalTwinProfile): DigitalTwinProfile {
   if (p.endOfDayAlertTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.endOfDayAlertTime)) {
     sanitized.endOfDayAlertTime = p.endOfDayAlertTime;
   }
+  if (p.focusSessionMinutes !== undefined) {
+    sanitized.focusSessionMinutes = Math.round(clampNum(p.focusSessionMinutes, 5, 180, 25));
+  }
   return sanitized;
 }
 

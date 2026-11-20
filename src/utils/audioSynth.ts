@@ -23,6 +23,16 @@ export const QURAN_SURAH_PRESETS: QuranSurahPreset[] = [
   { id: 2, name: 'سورة البقرة' },
 ];
 
+export type AlertToneId =
+  | 'chime_classic'
+  | 'calm_spiritual'
+  | 'work_crisp'
+  | 'urgent_pulse'
+  | 'study_bell'
+  | 'health_water'
+  | 'personal_warm'
+  | 'silent';
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private currentSource: AudioNode | null = null;
@@ -38,6 +48,95 @@ class SoundEngine {
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
+    }
+  }
+
+  private scheduleNote(
+    startTime: number,
+    freq: number,
+    duration: number,
+    type: OscillatorType = 'sine',
+    peakGain = 0.18
+  ) {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(peakGain, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  // Play distinct synthesized alert tone by preset ID
+  public playTone(toneId: AlertToneId) {
+    if (toneId === 'silent') return;
+    try {
+      this.initCtx();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+
+      switch (toneId) {
+        case 'calm_spiritual': {
+          // Warm spiritual pentatonic resonance (D4 -> A4 -> F#5 -> A5)
+          this.scheduleNote(now, 293.66, 0.9, 'sine', 0.12);
+          this.scheduleNote(now + 0.18, 440.0, 0.95, 'sine', 0.13);
+          this.scheduleNote(now + 0.38, 587.33, 1.1, 'sine', 0.14);
+          this.scheduleNote(now + 0.58, 659.25, 1.25, 'sine', 0.1);
+          break;
+        }
+        case 'work_crisp': {
+          // Crisp two-step business alert (G5 -> B5 -> D6)
+          this.scheduleNote(now, 783.99, 0.16, 'triangle', 0.16);
+          this.scheduleNote(now + 0.14, 987.77, 0.22, 'triangle', 0.16);
+          this.scheduleNote(now + 0.34, 1174.66, 0.35, 'sine', 0.18);
+          break;
+        }
+        case 'urgent_pulse': {
+          // High-awareness 3-pulse urgent chime (A5-E5 alternating)
+          this.scheduleNote(now, 880.0, 0.18, 'triangle', 0.22);
+          this.scheduleNote(now + 0.22, 1046.5, 0.18, 'triangle', 0.22);
+          this.scheduleNote(now + 0.44, 880.0, 0.18, 'triangle', 0.22);
+          this.scheduleNote(now + 0.66, 1174.66, 0.42, 'triangle', 0.24);
+          break;
+        }
+        case 'study_bell': {
+          // Harmonic crystal bell (C5 + G5 + E6)
+          this.scheduleNote(now, 523.25, 0.75, 'sine', 0.14);
+          this.scheduleNote(now + 0.06, 783.99, 0.85, 'sine', 0.14);
+          this.scheduleNote(now + 0.14, 1318.51, 0.9, 'sine', 0.1);
+          break;
+        }
+        case 'health_water': {
+          // Fresh ascending droplet arpeggio (E5 -> G5 -> A5 -> C6)
+          this.scheduleNote(now, 659.25, 0.22, 'sine', 0.14);
+          this.scheduleNote(now + 0.12, 783.99, 0.24, 'sine', 0.15);
+          this.scheduleNote(now + 0.24, 880.0, 0.3, 'sine', 0.15);
+          this.scheduleNote(now + 0.36, 1046.5, 0.55, 'sine', 0.16);
+          break;
+        }
+        case 'personal_warm': {
+          // Gentle marimba-like double chime (F4 -> A4 -> C5)
+          this.scheduleNote(now, 349.23, 0.35, 'triangle', 0.15);
+          this.scheduleNote(now + 0.16, 440.0, 0.4, 'sine', 0.15);
+          this.scheduleNote(now + 0.32, 523.25, 0.65, 'sine', 0.16);
+          break;
+        }
+        case 'chime_classic':
+        default: {
+          this.playChime(true);
+          break;
+        }
+      }
+    } catch (e) {
+      console.warn('Audio tone playback failed', e);
     }
   }
 

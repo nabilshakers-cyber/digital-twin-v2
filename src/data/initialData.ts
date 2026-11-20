@@ -14,6 +14,7 @@ export const defaultProfile: DigitalTwinProfile = {
   dailyEnergyLevel: 'medium',
   endOfDayOverloadAlertEnabled: false,
   endOfDayAlertTime: '20:00',
+  focusSessionMinutes: 25,
 };
 
 export const defaultTasks: Task[] = [

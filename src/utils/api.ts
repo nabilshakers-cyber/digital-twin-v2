@@ -15,8 +15,7 @@ import {
 declare const __APP_BACKEND_URL__: string | undefined;
 
 export const API_BASE_OVERRIDE_KEY = 'digital_twin_api_base_url_v1';
-const DEFAULT_CLOUD_RUN_URL =
-  'https://ais-pre-vxsnbmcn3cmjpgboeostti-53047493298.europe-west2.run.app';
+const DEFAULT_BACKEND_URL = 'https://digital-twin-v2-o9dw.onrender.com';
 
 export function isCapacitorNativeRuntime(): boolean {
   if (typeof window === 'undefined') return false;
@@ -51,79 +50,327 @@ export function resolveApiBase(): string {
     // ignore storage access issues
   }
 
-  const envBase = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
+  const envBase = (
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_API_BASE ||
+    ''
+  )
+    .trim()
+    .replace(/\/$/, '');
   if (envBase) return envBase;
 
   const buildTimeBase =
     typeof __APP_BACKEND_URL__ === 'string' ? __APP_BACKEND_URL__.trim().replace(/\/$/, '') : '';
-  return buildTimeBase || DEFAULT_CLOUD_RUN_URL;
+  return buildTimeBase || DEFAULT_BACKEND_URL;
+}
+
+export interface FetchServerOptions {
+  timeoutMs?: number;
+  retryOnColdStart?: boolean;
+  onWaitingForWakeup?: (info: { attempt: number; elapsedMs: number; status?: number }) => void;
+}
+
+const DEFAULT_API_TIMEOUT_MS = 60_000;
+const COLD_START_RETRY_DELAY_MS = 3_500;
+
+function sleepWithAbort(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Diagnostic Fetch wrapper for communicating with the backend server.
+ * Waits up to 60 seconds (with cold-start retries on 502/503/504 or waking sockets)
+ * and logs HTTP status, Content-Type, response preview, and network/CORS failures.
+ */
+export async function fetchServerJson<T>(
+  endpoint: string,
+  init: RequestInit,
+  fallbackError: string,
+  options?: FetchServerOptions
+): Promise<T> {
+  const apiBase = resolveApiBase();
+  const url = `${apiBase}${endpoint}`;
+  const isNative = isCapacitorNativeRuntime();
+  const totalTimeoutMs = options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+  const retryOnColdStart = options?.retryOnColdStart ?? true;
+  const externalSignal = init.signal;
+
+  const mergedHeaders: HeadersInit = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    ...(init.headers || {}),
+  };
+
+  const baseRequestInit: RequestInit = {
+    ...init,
+    mode: apiBase ? 'cors' : init.mode,
+    headers: mergedHeaders,
+  };
+
+  console.info('[API Request]', {
+    method: baseRequestInit.method || 'GET',
+    url,
+    origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+    isCapacitorNative: isNative,
+    timeoutMs: totalTimeoutMs,
+  });
+
+  const startedAt = Date.now();
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+
+    if (externalSignal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const remainingMs = totalTimeoutMs - elapsedMs;
+    if (remainingMs <= 0) {
+      throw new Error(
+        `استغرق الخادم أكثر من ${Math.round(totalTimeoutMs / 1000)} ثانية للاستجابة. يرجى المحاولة مرة أخرى.`
+      );
+    }
+
+    const attemptController = new AbortController();
+    let timedOut = false;
+
+    const onExternalAbort = () => {
+      attemptController.abort();
+    };
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      attemptController.abort();
+    }, remainingMs);
+
+    let res: Response | null = null;
+    try {
+      res = await fetch(url, {
+        ...baseRequestInit,
+        signal: attemptController.signal,
+      });
+    } catch (networkErr: unknown) {
+      clearTimeout(timeoutTimer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+
+      if (externalSignal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      if (timedOut) {
+        console.error('[API Fetch Error - Timeout (60s)]', {
+          url,
+          elapsedMs: Date.now() - startedAt,
+          attempt,
+        });
+        throw new Error(
+          `انتهت مهلة الاتصال بالمساعد (${Math.round(totalTimeoutMs / 1000)} ثانية). قد يكون الخادم لا يزال قيد التشغيل، يرجى المحاولة مجدداً.`
+        );
+      }
+
+      const timeLeftAfterErr = totalTimeoutMs - (Date.now() - startedAt);
+      if (retryOnColdStart && timeLeftAfterErr > COLD_START_RETRY_DELAY_MS + 1000) {
+        console.warn('[API Cold Start / Network Retry]', {
+          url,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
+        });
+        options?.onWaitingForWakeup?.({
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+        });
+        await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+        continue;
+      }
+
+      // Final failure — log full diagnostic info
+      console.error('[API Fetch Error - Network / Possible CORS Failure]', {
+        url,
+        method: baseRequestInit.method || 'GET',
+        origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+        isCapacitorNative: isNative,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        errorName: networkErr instanceof Error ? networkErr.name : typeof networkErr,
+        errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
+        rawError: networkErr,
+      });
+
+      // Only retry relative endpoint on non-native web (on Capacitor native, relative /api/* hits local index.html)
+      if (apiBase && !isNative) {
+        try {
+          res = await fetch(endpoint, { ...baseRequestInit, signal: externalSignal });
+        } catch (retryErr: unknown) {
+          console.error('[API Fetch Retry Error]', { endpoint, retryErr });
+          throw new Error(
+            `تعذر الاتصال بالخادم (${url}). قد يكون السبب حجب CORS أو انقطاع الشبكة: ${
+              networkErr instanceof Error ? networkErr.message : String(networkErr)
+            }`
+          );
+        }
+      } else {
+        throw new Error(
+          `فشل الاتصال بخادم المساعد (${url}). السبب المحتمل: انتهاء مهلة سكون الخادم أو حجب CORS أو عدم توفر الشبكة (${
+            networkErr instanceof Error ? networkErr.message : String(networkErr)
+          }).`
+        );
+      }
+    } finally {
+      clearTimeout(timeoutTimer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+    }
+
+    if (!res) {
+      throw new Error(fallbackError);
+    }
+
+    // Cold-start gateway statuses (Render sleep/boot returns 502/503/504 while spinning up)
+    const isWakeupStatus = res.status === 502 || res.status === 503 || res.status === 504;
+    const remainingAfterRes = totalTimeoutMs - (Date.now() - startedAt);
+    if (
+      isWakeupStatus &&
+      retryOnColdStart &&
+      remainingAfterRes > COLD_START_RETRY_DELAY_MS + 1000
+    ) {
+      console.warn('[API Cold Start - Server Waking Up]', {
+        url,
+        status: res.status,
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+      });
+      options?.onWaitingForWakeup?.({
+        attempt,
+        elapsedMs: Date.now() - startedAt,
+        status: res.status,
+      });
+      await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+      continue;
+    }
+
+    const rawText = await res.text();
+    const trimmed = rawText.trimStart();
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+    // Detect HTML returned instead of JSON (404 page, proxy/gateway error, or auth redirect)
+    if (
+      trimmed.startsWith('<!doctype') ||
+      trimmed.startsWith('<html') ||
+      trimmed.startsWith('<') ||
+      (contentType.includes('text/html') && !contentType.includes('application/json'))
+    ) {
+      // Some hosting gateways return a 5xx HTML "Service Starting / Loading" page during cold start
+      if (
+        res.status >= 500 &&
+        retryOnColdStart &&
+        totalTimeoutMs - (Date.now() - startedAt) > COLD_START_RETRY_DELAY_MS + 1000
+      ) {
+        console.warn('[API Cold Start - HTML Boot Page Retry]', {
+          url,
+          status: res.status,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+        });
+        options?.onWaitingForWakeup?.({
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          status: res.status,
+        });
+        await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+        continue;
+      }
+
+      const diagnosis =
+        res.status === 404
+          ? '404 Not Found — المسار غير موجود على الخادم'
+          : res.redirected
+          ? `Redirected (${res.status}) — تم التحويل لصفحة HTML (${res.url})`
+          : res.status >= 500
+          ? `Server/Gateway Error (${res.status} ${res.statusText})`
+          : `HTML Response (${res.status} ${res.statusText})`;
+
+      console.error('[API Fetch Error - HTML Returned Instead of JSON]', {
+        diagnosis,
+        requestUrl: url,
+        responseUrl: res.url,
+        status: res.status,
+        statusText: res.statusText,
+        redirected: res.redirected,
+        contentType,
+        bodyPreview: rawText.slice(0, 500),
+      });
+
+      throw new Error(
+        `استجاب الخادم بصفحة HTML بدلاً من JSON [${diagnosis}] على الرابط: ${url}`
+      );
+    }
+
+    let data: any = {};
+    if (trimmed) {
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error('[API Fetch Error - Invalid JSON]', {
+          requestUrl: url,
+          status: res.status,
+          statusText: res.statusText,
+          contentType,
+          bodyPreview: rawText.slice(0, 500),
+          parseErr,
+        });
+        throw new Error(`${fallbackError} (HTTP ${res.status})`);
+      }
+    }
+
+    if (!res.ok) {
+      console.error('[API Fetch Error - HTTP Status]', {
+        requestUrl: url,
+        status: res.status,
+        statusText: res.statusText,
+        contentType,
+        data,
+      });
+      throw new Error(data?.error || `${fallbackError} (HTTP ${res.status})`);
+    }
+
+    return data as T;
+  }
 }
 
 async function postJson<T>(
   endpoint: string,
   payload: unknown,
-  fallbackError: string
+  fallbackError: string,
+  requestOptions?: FetchServerOptions & { signal?: AbortSignal }
 ): Promise<T> {
-  const apiBase = resolveApiBase();
-  const url = `${apiBase}${endpoint}`;
-  const requestInit: RequestInit = {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
+  const { signal, ...fetchOptions } = requestOptions || {};
+  return fetchServerJson<T>(
+    endpoint,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
     },
-    body: JSON.stringify(payload),
-  };
-
-  let res: Response;
-  try {
-    res = await fetch(url, requestInit);
-  } catch {
-    if (apiBase) {
-      try {
-        res = await fetch(endpoint, requestInit);
-      } catch {
-        throw new Error(
-          'تعذر الوصول إلى خادم المساعد الرقمي. تأكد من اتصال الإنترنت ومن عنوان الخادم في الإعدادات.'
-        );
-      }
-    } else {
-      throw new Error(
-        'تعذر الوصول إلى خادم المساعد الرقمي. تأكد من اتصال الإنترنت ومن عنوان الخادم في الإعدادات.'
-      );
-    }
-  }
-
-  const rawText = await res.text();
-  const trimmed = rawText.trimStart();
-  const contentType = (res.headers.get('content-type') || '').toLowerCase();
-
-  // Guard against HTML fallback pages (e.g. <!doctype html>) returned instead of JSON
-  if (
-    trimmed.startsWith('<!doctype') ||
-    trimmed.startsWith('<html') ||
-    trimmed.startsWith('<') ||
-    (contentType.includes('text/html') && !contentType.includes('application/json'))
-  ) {
-    throw new Error(
-      'استجاب الخادم بصفحة HTML بدلاً من JSON. يرجى التحقق من رابط خادم API في تبويب «تطبيق أندرويد» داخل الإعدادات.'
-    );
-  }
-
-  let data: any = {};
-  if (trimmed) {
-    try {
-      data = JSON.parse(rawText);
-    } catch {
-      throw new Error(fallbackError);
-    }
-  }
-
-  if (!res.ok) {
-    throw new Error(data?.error || fallbackError);
-  }
-
-  return data as T;
+    fallbackError,
+    fetchOptions
+  );
 }
 
 export interface DigitalAssistantResponse {
@@ -138,36 +385,44 @@ export interface DigitalAssistantResponse {
   };
 }
 
-export async function askDigitalAssistant(params: {
-  message: string;
-  history: ChatMessage[];
-  profile: DigitalTwinProfile;
-  tasks: Task[];
-  schedule: TimeBlock[];
-  goals?: LongTermGoal[];
-  quranRoutine?: QuranRoutineItem[];
-  adhkarState?: DailyAdhkarState;
-  currentDate?: string;
-}): Promise<DigitalAssistantResponse> {
+export async function askDigitalAssistant(
+  params: {
+    message: string;
+    history: ChatMessage[];
+    profile: DigitalTwinProfile;
+    tasks: Task[];
+    schedule: TimeBlock[];
+    goals?: LongTermGoal[];
+    quranRoutine?: QuranRoutineItem[];
+    adhkarState?: DailyAdhkarState;
+    currentDate?: string;
+  },
+  requestOptions?: FetchServerOptions & { signal?: AbortSignal }
+): Promise<DigitalAssistantResponse> {
   return postJson<DigitalAssistantResponse>(
     '/api/twin/assistant',
     params,
-    'فشل الاتصال بالمساعد الرقمي AI'
+    'فشل الاتصال بالمساعد الرقمي AI',
+    { timeoutMs: 60_000, retryOnColdStart: true, ...requestOptions }
   );
 }
 
-export async function askTwinChat(params: {
-  message: string;
-  history: ChatMessage[];
-  profile: DigitalTwinProfile;
-  tasks: Task[];
-  schedule: TimeBlock[];
-  context?: string;
-}): Promise<string> {
+export async function askTwinChat(
+  params: {
+    message: string;
+    history: ChatMessage[];
+    profile: DigitalTwinProfile;
+    tasks: Task[];
+    schedule: TimeBlock[];
+    context?: string;
+  },
+  requestOptions?: FetchServerOptions & { signal?: AbortSignal }
+): Promise<string> {
   const data = await postJson<{ reply: string }>(
     '/api/twin/chat',
     params,
-    'فشل الاتصال بالتوأم الرقمي'
+    'فشل الاتصال بالتوأم الرقمي',
+    { timeoutMs: 60_000, retryOnColdStart: true, ...requestOptions }
   );
   return data.reply;
 }
@@ -248,14 +503,17 @@ export async function generateBriefingWithAI(params: {
   };
 }
 
-export async function processVoiceNoteWithAI(params: {
-  audioBase64: string;
-  mimeType: string;
-  profile: DigitalTwinProfile;
-  tasks: Task[];
-  schedule: TimeBlock[];
-  currentDate?: string;
-}): Promise<{
+export async function processVoiceNoteWithAI(
+  params: {
+    audioBase64: string;
+    mimeType: string;
+    profile: DigitalTwinProfile;
+    tasks: Task[];
+    schedule: TimeBlock[];
+    currentDate?: string;
+  },
+  requestOptions?: FetchServerOptions & { signal?: AbortSignal }
+): Promise<{
   transcript: string;
   summary: string;
   twinReply: string;
@@ -265,7 +523,8 @@ export async function processVoiceNoteWithAI(params: {
   return postJson(
     '/api/twin/voice-note',
     params,
-    'فشل تفريغ وتحليل الملاحظة الصوتية'
+    'فشل تفريغ وتحليل الملاحظة الصوتية',
+    { timeoutMs: 60_000, retryOnColdStart: true, ...requestOptions }
   );
 }
 

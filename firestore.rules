@@ -50,7 +50,8 @@ service cloud.firestore {
         && p.keys().hasOnly([
           'name', 'role', 'avatarSeed', 'tone', 'peakEnergy', 'workStyle',
           'mainGoals', 'rules', 'dailyWorkHoursTarget', 'weeklyCompletionGoalRate',
-          'dailyEnergyLevel', 'endOfDayOverloadAlertEnabled', 'endOfDayAlertTime'
+          'dailyEnergyLevel', 'endOfDayOverloadAlertEnabled', 'endOfDayAlertTime',
+          'focusSessionMinutes'
         ])
         && p.name is string && p.name.size() <= 120
         && p.role is string && p.role.size() <= 200
@@ -65,7 +66,8 @@ service cloud.firestore {
         && isOptionalIntRange(p, 'weeklyCompletionGoalRate', 10, 100)
         && (!('dailyEnergyLevel' in p) || (p.dailyEnergyLevel is string && p.dailyEnergyLevel in ['low', 'medium', 'high']))
         && isOptionalBool(p, 'endOfDayOverloadAlertEnabled')
-        && (!('endOfDayAlertTime' in p) || (p.endOfDayAlertTime is string && p.endOfDayAlertTime.size() >= 4 && p.endOfDayAlertTime.size() <= 8 && p.endOfDayAlertTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')));
+        && (!('endOfDayAlertTime' in p) || (p.endOfDayAlertTime is string && p.endOfDayAlertTime.size() >= 4 && p.endOfDayAlertTime.size() <= 8 && p.endOfDayAlertTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')))
+        && isOptionalIntRange(p, 'focusSessionMinutes', 5, 180);
     }
 
     function isValidAdhkarMap(a) {

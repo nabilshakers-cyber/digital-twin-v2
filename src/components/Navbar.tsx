@@ -16,17 +16,21 @@ import {
   CloudOff,
   LogIn,
   RefreshCw,
+  Bell,
+  BellRing,
+  BellOff,
 } from 'lucide-react';
 import type { AppAuthUser } from '../firebase';
 import { DigitalTwinProfile, Task } from '../types';
 import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
-import { NotificationCenter } from './NotificationCenter';
 import { PWAInstallButton } from './PWAInstallButton';
 
+export type AppNavTab = 'dashboard' | 'tasks' | 'schedule' | 'focus' | 'notifications';
+
 interface NavbarProps {
-  currentTab: 'dashboard' | 'tasks' | 'schedule' | 'focus';
-  setCurrentTab: (tab: 'dashboard' | 'tasks' | 'schedule' | 'focus') => void;
+  currentTab: AppNavTab;
+  setCurrentTab: (tab: AppNavTab) => void;
   profile: DigitalTwinProfile;
   onOpenQuickAdd: () => void;
   onOpenChat: () => void;
@@ -97,6 +101,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>('');
+
+  const overdueCount = reminders.filter((r) => r.urgency === 'overdue').length;
+  const totalNotificationsCount = reminders.length;
+  const isNotificationsTab = currentTab === 'notifications';
+
+  const handleNavClick = (
+    e: React.MouseEvent<HTMLAnchorElement>,
+    tab: AppNavTab
+  ) => {
+    e.preventDefault();
+    setCurrentTab(tab);
+  };
 
   useEffect(() => {
     const updateTime = () => {
@@ -212,31 +228,47 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <div className="h-5 w-px bg-slate-800 mx-0.5 shrink-0" aria-hidden="true" />
 
-            {/* Smart Notifications & Reminders Center */}
-            <NotificationCenter
-              variant="nav-tab"
-              buttonId="btn-notifications-center"
-              reminders={reminders}
-              pushPermission={pushPermission}
-              pushEnabled={pushEnabled}
-              soundEnabled={soundEnabled}
-              onEnablePush={onEnablePush}
-              onTogglePushEnabled={onTogglePushEnabled}
-              onToggleSound={onToggleSound}
-              onTestAlert={onTestAlert}
-              onCompleteReminder={onCompleteReminder}
-              onSnoozeReminder={onSnoozeReminder}
-              onDismissReminder={onDismissReminder}
-              onStartFocus={onStartFocus}
-              isDndActive={isDndActive}
-              autoDndEnabled={autoDndEnabled}
-              manualDnd={manualDnd}
-              onToggleAutoDnd={onToggleAutoDnd}
-              onToggleManualDnd={onToggleManualDnd}
-              onReviewTomorrowSchedule={onReviewTomorrowSchedule}
-              onRebalanceWithTwin={onRebalanceWithTwin}
-              onCheckTomorrowEnergy={onCheckTomorrowEnergy}
-            />
+            {/* Notifications Page Navigation Link */}
+            <a
+              id="btn-notifications-center"
+              href="#/notifications"
+              onClick={(e) => handleNavClick(e, 'notifications')}
+              aria-current={isNotificationsTab ? 'page' : undefined}
+              title="الانتقال إلى صفحة الإشعارات والتذكيرات"
+              className={`relative flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
+                isNotificationsTab
+                  ? 'bg-cyan-600 text-white shadow-sm'
+                  : isDndActive
+                  ? 'text-indigo-300 hover:bg-indigo-950/60'
+                  : overdueCount > 0
+                  ? 'text-rose-300 hover:bg-rose-950/50'
+                  : totalNotificationsCount > 0
+                  ? 'text-amber-300 hover:bg-amber-950/40'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              {isDndActive ? (
+                <BellOff className="w-4 h-4 shrink-0" />
+              ) : overdueCount > 0 ? (
+                <BellRing className="w-4 h-4 shrink-0 animate-bounce" />
+              ) : (
+                <Bell className="w-4 h-4 shrink-0" />
+              )}
+              <span>الإشعارات</span>
+              {!isDndActive && totalNotificationsCount > 0 && (
+                <span
+                  className={`min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-black flex items-center justify-center shadow ${
+                    overdueCount > 0
+                      ? 'bg-rose-500 text-white'
+                      : isNotificationsTab
+                      ? 'bg-slate-950/90 text-cyan-300'
+                      : 'bg-amber-400 text-slate-950'
+                  }`}
+                >
+                  {totalNotificationsCount}
+                </span>
+              )}
+            </a>
 
             {/* Profile / Settings */}
             <button
@@ -389,30 +421,44 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span>التركيز</span>
           </button>
 
-          <NotificationCenter
-            variant="mobile-nav"
-            buttonId="btn-notifications-center-mobile"
-            reminders={reminders}
-            pushPermission={pushPermission}
-            pushEnabled={pushEnabled}
-            soundEnabled={soundEnabled}
-            onEnablePush={onEnablePush}
-            onTogglePushEnabled={onTogglePushEnabled}
-            onToggleSound={onToggleSound}
-            onTestAlert={onTestAlert}
-            onCompleteReminder={onCompleteReminder}
-            onSnoozeReminder={onSnoozeReminder}
-            onDismissReminder={onDismissReminder}
-            onStartFocus={onStartFocus}
-            isDndActive={isDndActive}
-            autoDndEnabled={autoDndEnabled}
-            manualDnd={manualDnd}
-            onToggleAutoDnd={onToggleAutoDnd}
-            onToggleManualDnd={onToggleManualDnd}
-            onReviewTomorrowSchedule={onReviewTomorrowSchedule}
-            onRebalanceWithTwin={onRebalanceWithTwin}
-            onCheckTomorrowEnergy={onCheckTomorrowEnergy}
-          />
+          <a
+            id="btn-notifications-center-mobile"
+            href="#/notifications"
+            onClick={(e) => handleNavClick(e, 'notifications')}
+            aria-current={isNotificationsTab ? 'page' : undefined}
+            title="الانتقال إلى صفحة الإشعارات والتذكيرات"
+            className={`relative flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all cursor-pointer ${
+              isNotificationsTab
+                ? 'text-cyan-300 font-bold bg-cyan-500/15'
+                : isDndActive
+                ? 'text-indigo-300'
+                : overdueCount > 0
+                ? 'text-rose-300'
+                : totalNotificationsCount > 0
+                ? 'text-amber-300'
+                : 'text-slate-400'
+            }`}
+          >
+            {isDndActive ? (
+              <BellOff className="w-5 h-5" />
+            ) : overdueCount > 0 ? (
+              <BellRing className="w-5 h-5 animate-bounce" />
+            ) : (
+              <Bell className="w-5 h-5" />
+            )}
+            <span>الإشعارات</span>
+            {!isDndActive && totalNotificationsCount > 0 && (
+              <span
+                className={`absolute top-0.5 right-0.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow ${
+                  overdueCount > 0
+                    ? 'bg-rose-500 text-white'
+                    : 'bg-amber-400 text-slate-950'
+                }`}
+              >
+                {totalNotificationsCount}
+              </span>
+            )}
+          </a>
 
           <button
             id="btn-twin-settings-mobile"

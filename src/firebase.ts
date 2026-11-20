@@ -19,6 +19,10 @@ import { isCapacitorNativeRuntime } from './utils/api';
 
 const app = initializeApp(firebaseConfig);
 
+const firestoreDatabaseId =
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
+  'ai-studio-digitaltwintaskm-9dac13b3-7978-4cfa-aa0e-77a427f44496';
+
 let firestoreInstance: Firestore;
 try {
   firestoreInstance = initializeFirestore(
@@ -28,10 +32,10 @@ try {
         tabManager: persistentMultipleTabManager(),
       }),
     },
-    firebaseConfig.firestoreDatabaseId
+    firestoreDatabaseId
   );
 } catch {
-  firestoreInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  firestoreInstance = getFirestore(app, firestoreDatabaseId);
 }
 
 export const db = firestoreInstance;

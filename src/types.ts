@@ -46,6 +46,8 @@ export interface TimeBlock {
   isFixed?: boolean;
   iconName?: string;
   date?: string; // YYYY-MM-DD (Gregorian ISO, mapped to Hijri automatically)
+  googleEventId?: string;
+  googleCalendarUpdated?: string;
 }
 
 export interface DigitalTwinProfile {
@@ -62,6 +64,7 @@ export interface DigitalTwinProfile {
   dailyEnergyLevel?: 'low' | 'medium' | 'high';
   endOfDayOverloadAlertEnabled?: boolean;
   endOfDayAlertTime?: string;
+  focusSessionMinutes?: number;
 }
 
 export interface ChatMessage {
