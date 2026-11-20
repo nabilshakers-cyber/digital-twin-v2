@@ -11,6 +11,8 @@ workflows:
         script: npm install
       - name: Install Capacitor
         script: npm install @capacitor/cli @capacitor/android
+      - name: Install Local Notifications
+        script: npm install @capacitor/local-notifications
       - name: Build Web App
         script: npm run build
       - name: Sync Web Assets
