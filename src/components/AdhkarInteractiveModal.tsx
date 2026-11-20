@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Bell,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -16,6 +17,8 @@ import { DhikrItem, EVENING_ADHKAR, MORNING_ADHKAR } from '../data/adhkarData';
 import { getTodayIso } from '../utils/reminderEngine';
 import { soundEngine } from '../utils/audioSynth';
 import { useModalScrollLock } from '../utils/modalCoordinator';
+import { useScheduledReminders } from '../utils/localNotifications';
+import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
 
 const ADHKAR_COUNTS_STORAGE_KEY = 'digital_twin_adhkar_counts_v1';
 
@@ -67,6 +70,8 @@ export const AdhkarInteractiveModal: React.FC<AdhkarInteractiveModalProps> = ({
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [fontScale, setFontScale] = useState<'sm' | 'md' | 'lg'>('md');
   const [showOnlyRemaining, setShowOnlyRemaining] = useState(false);
+  const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
+  const scheduledReminders = useScheduledReminders();
 
   useEffect(() => {
     try {
@@ -265,15 +270,53 @@ export const AdhkarInteractiveModal: React.FC<AdhkarInteractiveModalProps> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="إغلاق"
-              className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
-              title="إغلاق"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {(() => {
+                const periodKey = `adhkar:${period}`;
+                const periodReminder = scheduledReminders[periodKey];
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReminderTarget({
+                        itemKey: periodKey,
+                        title: isMorning ? 'أذكار الصباح' : 'أذكار المساء',
+                        notificationTitle: isMorning
+                          ? '☀️ تذكير أذكار الصباح'
+                          : '🌙 تذكير أذكار المساء',
+                        notificationBody: isMorning
+                          ? 'حان موعد أذكار الصباح المباركة.'
+                          : 'حان موعد أذكار المساء والسكينة.',
+                        category: 'adhkar',
+                        defaultTime: isMorning ? '06:00' : '17:30',
+                        defaultRepeatDaily: true,
+                      })
+                    }
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border transition-colors cursor-pointer ${
+                      periodReminder
+                        ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200 hover:bg-cyan-500/30'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                    title="ضبط منبه لهذه الأذكار"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    <span className="font-mono">
+                      {periodReminder ? periodReminder.timeHHMM : 'منبه'}
+                    </span>
+                  </button>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="إغلاق"
+                className="app-modal-close p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors cursor-pointer"
+                title="إغلاق"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -621,6 +664,38 @@ export const AdhkarInteractiveModal: React.FC<AdhkarInteractiveModalProps> = ({
                           className="flex items-center gap-2"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {(() => {
+                            const dhikrKey = `adhkar:${period}:${item.id}`;
+                            const dhikrReminder = scheduledReminders[dhikrKey];
+                            return (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReminderTarget({
+                                    itemKey: dhikrKey,
+                                    title: item.title,
+                                    notificationTitle: `🤲 تذكير ذِكر: ${item.title}`,
+                                    notificationBody: item.text.slice(0, 120),
+                                    category: 'adhkar',
+                                    defaultTime: isMorning ? '06:00' : '17:30',
+                                    defaultRepeatDaily: true,
+                                  })
+                                }
+                                title="ضبط منبه لهذا الذكر"
+                                className={`px-2 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 border transition-colors cursor-pointer ${
+                                  dhikrReminder
+                                    ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200'
+                                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-cyan-300'
+                                }`}
+                              >
+                                <Bell className="w-3.5 h-3.5" />
+                                {dhikrReminder && (
+                                  <span className="font-mono text-[11px]">{dhikrReminder.timeHHMM}</span>
+                                )}
+                              </button>
+                            );
+                          })()}
+
                           {!isDone && item.repeat >= 10 && (
                             <button
                               type="button"
@@ -701,6 +776,15 @@ export const AdhkarInteractiveModal: React.FC<AdhkarInteractiveModalProps> = ({
           )}
         </div>
       </div>
+
+      <ReminderTimePickerModal
+        target={reminderTarget}
+        existingReminder={
+          reminderTarget ? scheduledReminders[reminderTarget.itemKey] : undefined
+        }
+        onClose={() => setReminderTarget(null)}
+        listenGlobalClose={false}
+      />
     </div>
   );
 };

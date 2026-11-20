@@ -37,6 +37,11 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { classifyTasksWithAI, optimizeScheduleWithAI } from './utils/api';
 import { soundEngine } from './utils/audioSynth';
 import { broadcastCloseAllModals, useModalCloseListener } from './utils/modalCoordinator';
+import {
+  cancelReminder,
+  initializeLocalNotifications,
+  requestLocalNotificationPermissions,
+} from './utils/localNotifications';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   auth,
@@ -636,6 +641,11 @@ export default function App() {
     await runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, latestSnapshotRef.current));
   };
 
+  // Request Capacitor LocalNotifications permissions on startup and restore reminder timers
+  useEffect(() => {
+    void initializeLocalNotifications();
+  }, []);
+
   // Poll every 30 seconds for approaching/overdue reminders
   useEffect(() => {
     const interval = setInterval(() => {
@@ -804,6 +814,7 @@ export default function App() {
 
   const handleDeleteTask = (taskId: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    void cancelReminder(`task:${taskId}`);
     void runCloudMutation((uid) => deleteTaskDoc(uid, taskId));
   };
 
@@ -1145,6 +1156,7 @@ export default function App() {
 
   const handleDeleteQuranRoutine = (id: string) => {
     setQuranRoutine((prev) => prev.filter((item) => item.id !== id));
+    void cancelReminder(`quran:${id}`);
     void runCloudMutation((uid) => deleteQuranDoc(uid, id));
   };
 
@@ -1446,6 +1458,7 @@ export default function App() {
 
   // Reminder Actions
   const handleEnablePush = async () => {
+    await requestLocalNotificationPermissions();
     const perm = await requestPushPermission();
     setPushPermission(perm);
     if (perm === 'granted') {

@@ -24,7 +24,8 @@ import {
   CalendarClock,
   Wand2,
   Loader2,
-  X
+  X,
+  Bell
 } from 'lucide-react';
 import { Task, Priority, TaskCategory, TaskStatus } from '../types';
 import { evaluateTaskUrgency } from '../utils/reminderEngine';
@@ -32,6 +33,9 @@ import {
   getSmartReschedulingSuggestions,
   getTomorrowDateString,
 } from '../utils/burnoutEngine';
+import { useScheduledReminders } from '../utils/localNotifications';
+import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
+import { broadcastCloseAllModals } from '../utils/modalCoordinator';
 
 interface TasksHubViewProps {
   tasks: Task[];
@@ -67,6 +71,22 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+  const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
+  const scheduledReminders = useScheduledReminders();
+
+  const openTaskReminderPicker = (task: Task) => {
+    broadcastCloseAllModals('reminder-time-picker');
+    setReminderTarget({
+      itemKey: `task:${task.id}`,
+      title: task.title,
+      notificationTitle: `✅ تذكير بمهمة: ${task.title}`,
+      notificationBody: task.description?.trim() || 'حان الوقت للبدء أو متابعة هذه المهمة.',
+      category: 'task',
+      defaultTime: task.dueTime && /^\d{2}:\d{2}$/.test(task.dueTime) ? task.dueTime : undefined,
+      defaultDate: task.dueDate || undefined,
+      defaultRepeatDaily: false,
+    });
+  };
 
   // Manual new / edit task state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -826,6 +846,32 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         <span className="hidden sm:inline">تركيز</span>
                       </button>
 
+                      {/* Local Reminder Bell */}
+                      {(() => {
+                        const taskReminder = scheduledReminders[`task:${task.id}`];
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => openTaskReminderPicker(task)}
+                            className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                              taskReminder
+                                ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200 hover:bg-cyan-500/30'
+                                : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-amber-300 border-slate-700'
+                            }`}
+                            title={
+                              taskReminder
+                                ? `تنبيه مجدول الساعة ${taskReminder.timeHHMM} — اضغط للتعديل أو الإلغاء`
+                                : 'ضبط منبه تذكير لهذه المهمة'
+                            }
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                            {taskReminder && (
+                              <span className="font-mono text-[11px]">{taskReminder.timeHHMM}</span>
+                            )}
+                          </button>
+                        );
+                      })()}
+
                       {/* Edit Task */}
                       <button
                         type="button"
@@ -920,9 +966,24 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     </div>
                     <div className="flex items-center justify-between text-[10px]">
                       {getPriorityBadge(task.priority)}
-                      <button onClick={() => onStartFocus(task)} className="text-amber-400 flex items-center gap-1">
-                        <Flame className="w-3 h-3" /> تركيز
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openTaskReminderPicker(task)}
+                          className={`flex items-center gap-1 cursor-pointer ${
+                            scheduledReminders[`task:${task.id}`]
+                              ? 'text-cyan-300 font-semibold'
+                              : 'text-slate-400 hover:text-amber-300'
+                          }`}
+                          title="ضبط منبه للمهمة"
+                        >
+                          <Bell className="w-3 h-3" />
+                          {scheduledReminders[`task:${task.id}`]?.timeHHMM || 'تنبيه'}
+                        </button>
+                        <button onClick={() => onStartFocus(task)} className="text-amber-400 flex items-center gap-1 cursor-pointer">
+                          <Flame className="w-3 h-3" /> تركيز
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -954,9 +1015,24 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     </div>
                     <div className="flex items-center justify-between text-[10px]">
                       {getPriorityBadge(task.priority)}
-                      <button onClick={() => onStartFocus(task)} className="text-amber-400 flex items-center gap-1 font-bold">
-                        <Flame className="w-3 h-3" /> استمرار
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openTaskReminderPicker(task)}
+                          className={`flex items-center gap-1 cursor-pointer ${
+                            scheduledReminders[`task:${task.id}`]
+                              ? 'text-cyan-300 font-semibold'
+                              : 'text-slate-400 hover:text-amber-300'
+                          }`}
+                          title="ضبط منبه للمهمة"
+                        >
+                          <Bell className="w-3 h-3" />
+                          {scheduledReminders[`task:${task.id}`]?.timeHHMM || 'تنبيه'}
+                        </button>
+                        <button onClick={() => onStartFocus(task)} className="text-amber-400 flex items-center gap-1 font-bold cursor-pointer">
+                          <Flame className="w-3 h-3" /> استمرار
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1090,6 +1166,14 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
 
         </div>
       )}
+
+      <ReminderTimePickerModal
+        target={reminderTarget}
+        existingReminder={
+          reminderTarget ? scheduledReminders[reminderTarget.itemKey] : undefined
+        }
+        onClose={() => setReminderTarget(null)}
+      />
 
     </div>
   );

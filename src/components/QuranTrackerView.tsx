@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Award, BookOpen, CheckCircle2, Edit3, Moon, Plus, RotateCcw, Sparkles, Sun, Trash2 } from 'lucide-react';
+import { Award, Bell, BookOpen, CheckCircle2, Edit3, Moon, Plus, RotateCcw, Sparkles, Sun, Trash2 } from 'lucide-react';
 import { DailyAdhkarState, QuranRoutineItem } from '../types';
 import {
   ADHKAR_STORAGE_KEY,
   computeNextAdhkarState,
   loadInitialAdhkarState,
 } from '../utils/reminderEngine';
+import { cancelReminder, useScheduledReminders } from '../utils/localNotifications';
 import { AdhkarInteractiveModal } from './AdhkarInteractiveModal';
+import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
 import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
 
 interface Props {
@@ -46,12 +48,54 @@ export const QuranTrackerView: React.FC<Props> = ({
   const [streak, setStreak] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeAdhkarModal, setActiveAdhkarModal] = useState<'morning' | 'evening' | null>(null);
+  const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
+  const scheduledReminders = useScheduledReminders();
 
   useModalCloseListener('adhkar-modal', () => setActiveAdhkarModal(null));
 
   const openAdhkarModal = (period: 'morning' | 'evening') => {
     broadcastCloseAllModals('adhkar-modal');
     setActiveAdhkarModal(period);
+  };
+
+  const inferQuranDefaultTime = (slot: string): string => {
+    const s = slot.toLowerCase();
+    if (s.includes('فجر')) return '05:30';
+    if (s.includes('ضحى') || s.includes('صباح')) return '09:00';
+    if (s.includes('ظهر')) return '12:30';
+    if (s.includes('عصر')) return '15:45';
+    if (s.includes('مغرب')) return '18:15';
+    if (s.includes('عشاء') || s.includes('مساء') || s.includes('نوم')) return '21:00';
+    return '06:00';
+  };
+
+  const openQuranReminderPicker = (item: QuranRoutineItem) => {
+    broadcastCloseAllModals('reminder-time-picker');
+    setReminderTarget({
+      itemKey: `quran:${item.id}`,
+      title: item.title,
+      notificationTitle: `📖 حان موعد ورد القرآن: ${item.title}`,
+      notificationBody: `${item.targetAmount} • ${item.timeSlot}`,
+      category: 'quran',
+      defaultTime: inferQuranDefaultTime(item.timeSlot),
+      defaultRepeatDaily: true,
+    });
+  };
+
+  const openAdhkarReminderPicker = (period: 'morning' | 'evening') => {
+    broadcastCloseAllModals('reminder-time-picker');
+    const isMorning = period === 'morning';
+    setReminderTarget({
+      itemKey: `adhkar:${period}`,
+      title: isMorning ? 'أذكار الصباح' : 'أذكار المساء',
+      notificationTitle: isMorning ? '☀️ تذكير أذكار الصباح' : '🌙 تذكير أذكار المساء',
+      notificationBody: isMorning
+        ? 'ابدأ يومك بحصن المسلم وأذكار الصباح المباركة.'
+        : 'اختم يومك بالطمأنينة والسكينة مع أذكار المساء.',
+      category: 'adhkar',
+      defaultTime: isMorning ? '06:00' : '17:30',
+      defaultRepeatDaily: true,
+    });
   };
 
   const notificationsEnabled =
@@ -217,6 +261,7 @@ export const QuranTrackerView: React.FC<Props> = ({
   };
 
   const handleDeleteLocalOrControlled = (id: string) => {
+    void cancelReminder(`quran:${id}`);
     if (onDeleteItem) {
       onDeleteItem(id);
     } else {
@@ -465,6 +510,29 @@ export const QuranTrackerView: React.FC<Props> = ({
                   <span>🎙️</span> فتح موقع ترتيل
                 </a>
 
+                {(() => {
+                  const activeReminder = scheduledReminders[`quran:${item.id}`];
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => openQuranReminderPicker(item)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-colors cursor-pointer ${
+                        activeReminder
+                          ? 'bg-amber-500/20 border-amber-400/60 text-amber-200 hover:bg-amber-500/30'
+                          : 'bg-slate-900/90 border-slate-700 text-slate-300 hover:text-amber-300 hover:border-amber-500/50'
+                      }`}
+                      title={
+                        activeReminder
+                          ? `تنبيه مجدول الساعة ${activeReminder.timeHHMM} — اضغط للتعديل أو الإلغاء`
+                          : 'ضبط منبه تذكير لهذا الورد'
+                      }
+                    >
+                      <Bell className="w-3.5 h-3.5" />
+                      <span>{activeReminder ? activeReminder.timeHHMM : 'تنبيه'}</span>
+                    </button>
+                  );
+                })()}
+
                 <button
                   type="button"
                   onClick={() => openEditForm(item)}
@@ -583,32 +651,60 @@ export const QuranTrackerView: React.FC<Props> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleAdhkar('morning');
-              }}
-              title={
-                adhkar.morningCompleted
-                  ? 'إلغاء تحديد الاكتمال السريع'
-                  : 'تحديد كمكتملة مباشرة'
-              }
-              className={`relative px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 border transition-all duration-500 cursor-pointer ${
-                adhkar.morningCompleted
-                  ? 'bg-amber-400/20 border-amber-300/60 text-amber-200 shadow-inner hover:bg-amber-400/30'
-                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
-              }`}
-            >
-              {adhkar.morningCompleted ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
-                  <span>مكتملة ✨</span>
-                </>
-              ) : (
-                <span>إتمام</span>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(() => {
+                const morningReminder = scheduledReminders['adhkar:morning'];
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAdhkarReminderPicker('morning');
+                    }}
+                    title={
+                      morningReminder
+                        ? `منبه أذكار الصباح الساعة ${morningReminder.timeHHMM}`
+                        : 'ضبط منبه لأذكار الصباح'
+                    }
+                    className={`relative px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border transition-all cursor-pointer ${
+                      morningReminder
+                        ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200 hover:bg-cyan-500/30'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-cyan-500/50 hover:text-cyan-200'
+                    }`}
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    {morningReminder && <span className="font-mono">{morningReminder.timeHHMM}</span>}
+                  </button>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleToggleAdhkar('morning');
+                }}
+                title={
+                  adhkar.morningCompleted
+                    ? 'إلغاء تحديد الاكتمال السريع'
+                    : 'تحديد كمكتملة مباشرة'
+                }
+                className={`relative px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 border transition-all duration-500 cursor-pointer ${
+                  adhkar.morningCompleted
+                    ? 'bg-amber-400/20 border-amber-300/60 text-amber-200 shadow-inner hover:bg-amber-400/30'
+                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
+                }`}
+              >
+                {adhkar.morningCompleted ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>مكتملة ✨</span>
+                  </>
+                ) : (
+                  <span>إتمام</span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* أذكار المساء */}
@@ -663,32 +759,60 @@ export const QuranTrackerView: React.FC<Props> = ({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleToggleAdhkar('evening');
-              }}
-              title={
-                adhkar.eveningCompleted
-                  ? 'إلغاء تحديد الاكتمال السريع'
-                  : 'تحديد كمكتملة مباشرة'
-              }
-              className={`relative px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 border transition-all duration-500 cursor-pointer ${
-                adhkar.eveningCompleted
-                  ? 'bg-amber-400/20 border-amber-300/60 text-amber-200 shadow-inner hover:bg-amber-400/30'
-                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
-              }`}
-            >
-              {adhkar.eveningCompleted ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
-                  <span>مكتملة ✨</span>
-                </>
-              ) : (
-                <span>إتمام</span>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(() => {
+                const eveningReminder = scheduledReminders['adhkar:evening'];
+                return (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAdhkarReminderPicker('evening');
+                    }}
+                    title={
+                      eveningReminder
+                        ? `منبه أذكار المساء الساعة ${eveningReminder.timeHHMM}`
+                        : 'ضبط منبه لأذكار المساء'
+                    }
+                    className={`relative px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border transition-all cursor-pointer ${
+                      eveningReminder
+                        ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200 hover:bg-cyan-500/30'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-cyan-500/50 hover:text-cyan-200'
+                    }`}
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    {eveningReminder && <span className="font-mono">{eveningReminder.timeHHMM}</span>}
+                  </button>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleToggleAdhkar('evening');
+                }}
+                title={
+                  adhkar.eveningCompleted
+                    ? 'إلغاء تحديد الاكتمال السريع'
+                    : 'تحديد كمكتملة مباشرة'
+                }
+                className={`relative px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 border transition-all duration-500 cursor-pointer ${
+                  adhkar.eveningCompleted
+                    ? 'bg-amber-400/20 border-amber-300/60 text-amber-200 shadow-inner hover:bg-amber-400/30'
+                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
+                }`}
+              >
+                {adhkar.eveningCompleted ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>مكتملة ✨</span>
+                  </>
+                ) : (
+                  <span>إتمام</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -715,6 +839,23 @@ export const QuranTrackerView: React.FC<Props> = ({
         }
         onClose={() => setActiveAdhkarModal(null)}
         onCompletePeriod={handleEnsureAdhkarCompleted}
+      />
+
+      {/* نافذة اختيار وقت التذكير (القرآن والأذكار) */}
+      <ReminderTimePickerModal
+        target={reminderTarget}
+        existingReminder={
+          reminderTarget ? scheduledReminders[reminderTarget.itemKey] : undefined
+        }
+        onClose={() => setReminderTarget(null)}
+        onScheduled={(scheduled) =>
+          showToast(
+            `🔔 تم ضبط التذكير لـ «${reminderTarget?.title}» الساعة ${scheduled.timeHHMM}${
+              scheduled.repeatDaily ? ' (يومياً)' : ''
+            }`
+          )
+        }
+        onCancelled={() => showToast('تم إلغاء التذكير المجدول بنجاح')}
       />
     </div>
   );
