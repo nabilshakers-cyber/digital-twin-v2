@@ -4,7 +4,7 @@ import http from "http";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 
 dotenv.config();
 
@@ -22,15 +22,97 @@ app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: "15mb" }));
 
-// Initialize Google GenAI
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
+// Initialize Google GenAI lazily or check key before requests
+function getAiClient(): GoogleGenAI {
+  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error("مفتاح GEMINI_API_KEY غير مهيأ على الخادم. يرجى إضافته في إعدادات الأسرار (Settings > Secrets).");
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
     },
+  });
+}
+
+let primaryCooldownUntil = 0;
+
+async function generateContentSmart(
+  label: string,
+  params: {
+    contents: any;
+    systemInstruction?: string;
+    thinkingLevel?: ThinkingLevel;
+    responseMimeType?: string;
+    responseSchema?: any;
   },
-});
+  primaryTimeoutMs = 8_000,
+  fallbackTimeoutMs = 25_000
+) {
+  const ai = getAiClient();
+
+  const buildConfig = (isPrimary: boolean, signal: AbortSignal) => {
+    const cfg: Record<string, any> = { abortSignal: signal };
+    if (params.systemInstruction) cfg.systemInstruction = params.systemInstruction;
+    if (params.responseMimeType) cfg.responseMimeType = params.responseMimeType;
+    if (params.responseSchema) cfg.responseSchema = params.responseSchema;
+    if (isPrimary && params.thinkingLevel) {
+      cfg.thinkingConfig = { thinkingLevel: params.thinkingLevel };
+    }
+    return cfg;
+  };
+
+  // Attempt 1: Primary model (gemini-4-hydrogen) unless in brief cooldown after 503/timeout
+  if (Date.now() >= primaryCooldownUntil) {
+    const primaryCtrl = new AbortController();
+    const primaryTimer = setTimeout(() => primaryCtrl.abort(), primaryTimeoutMs);
+    const t0 = Date.now();
+    try {
+      const res = await ai.models.generateContent({
+        model: "gemini-4-hydrogen",
+        contents: params.contents,
+        config: buildConfig(true, primaryCtrl.signal),
+      });
+      console.info(`[Gemini] ${label} (gemini-4-hydrogen) completed in ${Date.now() - t0}ms`);
+      return res;
+    } catch (primaryErr: any) {
+      const primaryElapsed = Date.now() - t0;
+      primaryCooldownUntil = Date.now() + 60_000;
+      console.warn(
+        `[Gemini] ${label} primary gemini-4-hydrogen failed after ${primaryElapsed}ms (${primaryErr?.status || primaryErr?.name || "err"}: ${primaryErr?.message || primaryErr}). Cooling down 60s and falling back to gemini-3.1-flash-lite...`
+      );
+    } finally {
+      clearTimeout(primaryTimer);
+    }
+  } else {
+    console.info(`[Gemini] ${label} using gemini-3.1-flash-lite during primary cooldown`);
+  }
+
+  // Attempt 2: Fast active fallback model (gemini-3.1-flash-lite)
+  const fallbackCtrl = new AbortController();
+  const fallbackTimer = setTimeout(() => fallbackCtrl.abort(), fallbackTimeoutMs);
+  const t1 = Date.now();
+  try {
+    const fallbackRes = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite",
+      contents: params.contents,
+      config: buildConfig(false, fallbackCtrl.signal),
+    });
+    console.info(`[Gemini] ${label} (gemini-3.1-flash-lite fallback) completed in ${Date.now() - t1}ms`);
+    return fallbackRes;
+  } catch (fallbackErr: any) {
+    console.error(
+      `[Gemini] ${label} fallback also failed after ${Date.now() - t1}ms:`,
+      fallbackErr
+    );
+    throw fallbackErr;
+  } finally {
+    clearTimeout(fallbackTimer);
+  }
+}
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -86,12 +168,10 @@ ${JSON.stringify(schedule || [], null, 2)}
       parts: [{ text: message }],
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/chat", {
       contents,
-      config: {
-        systemInstruction,
-      },
+      systemInstruction,
+      thinkingLevel: ThinkingLevel.LOW,
     });
 
     res.json({
@@ -130,10 +210,11 @@ ${JSON.stringify(fixedEvents || [], null, 2)}
 5. أرجع النتيجة بتنسيق JSON مطابق للمخطط المطلوب، مع تقديم نصائح موجزة وخطة عمل ذكية.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
-      contents: prompt,
-      config: {
+    const response = await generateContentSmart(
+      "/api/twin/optimize-schedule",
+      {
+        contents: prompt,
+        thinkingLevel: ThinkingLevel.MEDIUM,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -182,7 +263,8 @@ ${JSON.stringify(fixedEvents || [], null, 2)}
           required: ["summary", "timeBlocks", "topPriorities"],
         },
       },
-    });
+      15_000
+    );
 
     const parsed = JSON.parse(response.text || "{}");
     res.json(parsed);
@@ -210,32 +292,30 @@ app.post("/api/twin/breakdown-task", async (req, res) => {
 3. تقديم نصيحة ذكية للبدء بأسهل خطوة لكسر الجمود.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/breakdown-task", {
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            breakdownOverview: { type: Type.STRING },
-            quickWinTip: { type: Type.STRING, description: "أسرع حركة لكسر التسويف والبدء فوراً" },
-            subtasks: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  estimatedMinutes: { type: Type.INTEGER },
-                  difficulty: { type: Type.STRING, description: "easy | medium | hard" },
-                  focusTip: { type: Type.STRING },
-                },
-                required: ["title", "estimatedMinutes", "difficulty"],
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          breakdownOverview: { type: Type.STRING },
+          quickWinTip: { type: Type.STRING, description: "أسرع حركة لكسر التسويف والبدء فوراً" },
+          subtasks: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                estimatedMinutes: { type: Type.INTEGER },
+                difficulty: { type: Type.STRING, description: "easy | medium | hard" },
+                focusTip: { type: Type.STRING },
               },
+              required: ["title", "estimatedMinutes", "difficulty"],
             },
           },
-          required: ["breakdownOverview", "subtasks", "quickWinTip"],
         },
+        required: ["breakdownOverview", "subtasks", "quickWinTip"],
       },
     });
 
@@ -264,47 +344,45 @@ app.post("/api/twin/parse-quick-entry", async (req, res) => {
 2. المواعيد أو الأحداث المحددة بوقت (extractedEvents): وقت البداية والنهاية بصيغة 24 ساعة (HH:MM - إذا لم يُذكر وقت النهاية قدّره بإضافة 45 أو 60 دقيقة لوقت البداية)، العنوان، والتصنيف (deep_work, meeting, routine, health, personal, review).
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/parse-quick-entry", {
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            extractedTasks: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  priority: { type: Type.STRING, description: "high | medium | low" },
-                  category: { type: Type.STRING, description: "work | personal | health | study | urgent" },
-                  estimatedMinutes: { type: Type.INTEGER },
-                  dueDate: { type: Type.STRING },
-                  dueTime: { type: Type.STRING, description: "HH:MM 24h" },
-                },
-                required: ["title", "priority", "category"],
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          extractedTasks: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                priority: { type: Type.STRING, description: "high | medium | low" },
+                category: { type: Type.STRING, description: "work | personal | health | study | urgent" },
+                estimatedMinutes: { type: Type.INTEGER },
+                dueDate: { type: Type.STRING },
+                dueTime: { type: Type.STRING, description: "HH:MM 24h" },
               },
+              required: ["title", "priority", "category"],
             },
-            extractedEvents: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  startTime: { type: Type.STRING, description: "صيغة 24 ساعة مثل 10:00" },
-                  endTime: { type: Type.STRING, description: "صيغة 24 ساعة مثل 11:30" },
-                  category: { type: Type.STRING },
-                },
-                required: ["title", "startTime", "endTime"],
-              },
-            },
-            twinComment: { type: Type.STRING, description: "تعليق سريع ومختصر من التوأم الرقمي على ما تم إدراجه" },
           },
-          required: ["extractedTasks", "extractedEvents", "twinComment"],
+          extractedEvents: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                startTime: { type: Type.STRING, description: "صيغة 24 ساعة مثل 10:00" },
+                endTime: { type: Type.STRING, description: "صيغة 24 ساعة مثل 11:30" },
+                category: { type: Type.STRING },
+              },
+              required: ["title", "startTime", "endTime"],
+            },
+          },
+          twinComment: { type: Type.STRING, description: "تعليق سريع ومختصر من التوأم الرقمي على ما تم إدراجه" },
         },
+        required: ["extractedTasks", "extractedEvents", "twinComment"],
       },
     });
 
@@ -339,25 +417,23 @@ app.post("/api/twin/briefing", async (req, res) => {
 - energyQuote: حكمة أو تشجيع قصير بطابع شخصي
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/briefing", {
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            headline: { type: Type.STRING },
-            mainAdvice: { type: Type.STRING },
-            topPriorities: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            energyQuote: { type: Type.STRING },
-            syncScore: { type: Type.INTEGER, description: "نسبة التوافق والإنجاز 0 - 100" },
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          headline: { type: Type.STRING },
+          mainAdvice: { type: Type.STRING },
+          topPriorities: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
           },
-          required: ["headline", "mainAdvice", "topPriorities", "energyQuote"],
+          energyQuote: { type: Type.STRING },
+          syncScore: { type: Type.INTEGER, description: "نسبة التوافق والإنجاز 0 - 100" },
         },
+        required: ["headline", "mainAdvice", "topPriorities", "energyQuote"],
       },
     });
 
@@ -389,17 +465,26 @@ app.post("/api/twin/voice-note", async (req, res) => {
       },
     };
 
-    const transcriptionResponse = await ai.models.generateContent({
-      model: "gemini-3.5-transcribe",
-      contents: {
-        parts: [
-          audioPart,
-          {
-            text: "قم بتفريغ هذا التسجيل الصوتي بدقة إلى نص عربي واضح (أو باللغة المنطوقة فيه) مع الحفاظ على جميع التفاصيل والمواعيد والمهام المذكورة دون اختصار.",
-          },
-        ],
-      },
-    });
+    const ai = getAiClient();
+    const transcribeCtrl = new AbortController();
+    const transcribeTimer = setTimeout(() => transcribeCtrl.abort(), 25_000);
+    let transcriptionResponse;
+    try {
+      transcriptionResponse = await ai.models.generateContent({
+        model: "gemini-3.5-transcribe",
+        contents: {
+          parts: [
+            audioPart,
+            {
+              text: "قم بتفريغ هذا التسجيل الصوتي بدقة إلى نص عربي واضح (أو باللغة المنطوقة فيه) مع الحفاظ على جميع التفاصيل والمواعيد والمهام المذكورة دون اختصار.",
+            },
+          ],
+        },
+        config: { abortSignal: transcribeCtrl.signal },
+      });
+    } finally {
+      clearTimeout(transcribeTimer);
+    }
 
     const transcript = (transcriptionResponse.text ?? "").trim();
 
@@ -409,7 +494,7 @@ app.post("/api/twin/voice-note", async (req, res) => {
       });
     }
 
-    // Step 2: Summarize transcript & extract tasks/events using gemini-4-hydrogen
+    // Step 2: Summarize transcript & extract tasks/events
     const analysisPrompt = `
 أنت "النسخة الرقمية الذكية" للمستخدم (${profile?.name || "المستخدم"}).
 سجل المستخدم الملاحظة الصوتية التالية، وتم تفريغها إلى النص الآتي:
@@ -425,54 +510,52 @@ app.post("/api/twin/voice-note", async (req, res) => {
 4. استخراج أي مواعيد أو اجتماعات محددة بوقت (extractedEvents) مع وقت البداية والنهاية بصيغة 24 ساعة (HH:MM).
 `;
 
-    const analysisResponse = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const analysisResponse = await generateContentSmart("/api/twin/voice-note:analyze", {
       contents: analysisPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: {
-              type: Type.STRING,
-              description: "ملخص مركز ومفيد للملاحظة الصوتية باللغة العربية",
-            },
-            twinReply: {
-              type: Type.STRING,
-              description: "رد التوأم الرقمي على المستخدم بنبرة شخصية داعمة وعملية",
-            },
-            extractedTasks: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  priority: { type: Type.STRING, description: "high | medium | low" },
-                  category: { type: Type.STRING, description: "work | personal | health | study | urgent" },
-                  estimatedMinutes: { type: Type.INTEGER },
-                  dueDate: { type: Type.STRING },
-                  dueTime: { type: Type.STRING },
-                },
-                required: ["title", "priority", "category"],
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          summary: {
+            type: Type.STRING,
+            description: "ملخص مركز ومفيد للملاحظة الصوتية باللغة العربية",
+          },
+          twinReply: {
+            type: Type.STRING,
+            description: "رد التوأم الرقمي على المستخدم بنبرة شخصية داعمة وعملية",
+          },
+          extractedTasks: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                priority: { type: Type.STRING, description: "high | medium | low" },
+                category: { type: Type.STRING, description: "work | personal | health | study | urgent" },
+                estimatedMinutes: { type: Type.INTEGER },
+                dueDate: { type: Type.STRING },
+                dueTime: { type: Type.STRING },
               },
-            },
-            extractedEvents: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  startTime: { type: Type.STRING },
-                  endTime: { type: Type.STRING },
-                  category: { type: Type.STRING },
-                },
-                required: ["title", "startTime", "endTime"],
-              },
+              required: ["title", "priority", "category"],
             },
           },
-          required: ["summary", "twinReply", "extractedTasks", "extractedEvents"],
+          extractedEvents: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                startTime: { type: Type.STRING },
+                endTime: { type: Type.STRING },
+                category: { type: Type.STRING },
+              },
+              required: ["title", "startTime", "endTime"],
+            },
+          },
         },
+        required: ["summary", "twinReply", "extractedTasks", "extractedEvents"],
       },
     });
 
@@ -523,23 +606,21 @@ ${JSON.stringify(schedule || [], null, 2)}
 - suggestedAction: إجراء عملي فوري ومحدد يبدأ به المستخدم في أول دقيقتين لكسر الجمود.
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/contextual-briefing", {
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            summary: { type: Type.STRING },
-            keyNotes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            suggestedAction: { type: Type.STRING },
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          summary: { type: Type.STRING },
+          keyNotes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
           },
-          required: ["summary", "keyNotes", "suggestedAction"],
+          suggestedAction: { type: Type.STRING },
         },
+        required: ["summary", "keyNotes", "suggestedAction"],
       },
     });
 
@@ -598,37 +679,35 @@ ${JSON.stringify(compactTasks, null, 2)}
 أعد النتيجة بصيغة JSON مطابقة للمخطط بحيث تشمل كل معرف (id) في القائمة مع category و priority وسبب مختصر بالعربية (reason)، بالإضافة إلى ملخص عام (summary).
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/classify-tasks", {
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            classifications: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  category: {
-                    type: Type.STRING,
-                    description: "work | personal | health | study | urgent",
-                  },
-                  priority: {
-                    type: Type.STRING,
-                    description: "high | medium | low",
-                  },
-                  reason: { type: Type.STRING },
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          classifications: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                category: {
+                  type: Type.STRING,
+                  description: "work | personal | health | study | urgent",
                 },
-                required: ["id", "category", "priority"],
+                priority: {
+                  type: Type.STRING,
+                  description: "high | medium | low",
+                },
+                reason: { type: Type.STRING },
               },
+              required: ["id", "category", "priority"],
             },
-            summary: { type: Type.STRING },
           },
-          required: ["classifications", "summary"],
+          summary: { type: Type.STRING },
         },
+        required: ["classifications", "summary"],
       },
     });
 
@@ -677,6 +756,37 @@ app.post("/api/twin/assistant", async (req, res) => {
       day: "numeric",
     });
 
+    const compactTasks = (Array.isArray(tasks) ? tasks : []).slice(0, 20).map((t: any) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      category: t.category,
+      dueDate: t.dueDate,
+      dueTime: t.dueTime,
+    }));
+
+    const compactSchedule = (Array.isArray(schedule) ? schedule : []).slice(0, 15).map((b: any) => ({
+      startTime: b.startTime,
+      endTime: b.endTime,
+      title: b.title,
+      category: b.category,
+      isCompleted: b.isCompleted,
+    }));
+
+    const compactGoals = (Array.isArray(goals) ? goals : []).slice(0, 8).map((g: any) => ({
+      title: g.title,
+      progress: g.progress,
+      targetDate: g.targetDate,
+    }));
+
+    const compactQuran = (Array.isArray(quranRoutine) ? quranRoutine : []).map((q: any) => ({
+      title: q.title,
+      targetAmount: q.targetAmount,
+      completed: q.completed,
+      timeSlot: q.timeSlot,
+    }));
+
     const systemInstruction = `
 أنت "المساعد الرقمي AI" والتوأم الذكي الشخصي للمستخدم (${profile?.name || "المستخدم"}).
 تجمع بين دور المساعد التنفيذي، ومخطط اليوم، والموجّه الشخصي المتكامل مع المهام، التقويم الهجري والميلادي، الأهداف بعيدة المدى، وورد القرآن والأذكار.
@@ -696,19 +806,19 @@ app.post("/api/twin/assistant", async (req, res) => {
 - القواعد الذهبية: ${profile?.rules || ""}
 
 المهام الحالية (${Array.isArray(tasks) ? tasks.length : 0}):
-${JSON.stringify((tasks || []).slice(0, 25), null, 2)}
+${JSON.stringify(compactTasks)}
 
 جدول اليوم (${Array.isArray(schedule) ? schedule.length : 0}):
-${JSON.stringify((schedule || []).slice(0, 20), null, 2)}
+${JSON.stringify(compactSchedule)}
 
 الأهداف بعيدة المدى (${Array.isArray(goals) ? goals.length : 0}):
-${JSON.stringify((goals || []).slice(0, 10), null, 2)}
+${JSON.stringify(compactGoals)}
 
 ورد القرآن اليومي:
-${JSON.stringify(quranRoutine || [], null, 2)}
+${JSON.stringify(compactQuran)}
 
 حالة الأذكار اليومية:
-${JSON.stringify(adhkarState || {}, null, 2)}
+${JSON.stringify(adhkarState || {})}
 
 تعليمات الإخراج الصارمة:
 1. أجب باللغة العربية الواضحة والعملية، ورتب نصيحتك أو خطتك بنقاط مختصرة ومباشرة في حقل "reply".
@@ -725,7 +835,7 @@ ${JSON.stringify(adhkarState || {}, null, 2)}
 
     const contents: any[] = [];
     if (Array.isArray(history)) {
-      for (const h of history.slice(-8)) {
+      for (const h of history.slice(-6)) {
         if (h?.content) {
           contents.push({
             role: h.role === "user" ? "user" : "model",
@@ -739,85 +849,83 @@ ${JSON.stringify(adhkarState || {}, null, 2)}
       parts: [{ text: message }],
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-4-hydrogen",
+    const response = await generateContentSmart("/api/twin/assistant", {
       contents,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            reply: {
-              type: Type.STRING,
-              description: "رد المساعد الرقمي الشامل والعملي باللغة العربية",
-            },
-            suggestedTasks: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  priority: { type: Type.STRING, description: "high | medium | low" },
-                  category: {
-                    type: Type.STRING,
-                    description: "work | personal | health | study | urgent",
-                  },
-                  estimatedMinutes: { type: Type.INTEGER },
-                  dueDate: { type: Type.STRING },
-                  dueTime: { type: Type.STRING },
-                },
-                required: ["title", "priority", "category"],
-              },
-            },
-            suggestedEvents: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  startTime: { type: Type.STRING, description: "HH:MM 24h" },
-                  endTime: { type: Type.STRING, description: "HH:MM 24h" },
-                  category: {
-                    type: Type.STRING,
-                    description: "deep_work | meeting | routine | health | personal | review",
-                  },
-                },
-                required: ["title", "startTime", "endTime"],
-              },
-            },
-            suggestedGoals: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  category: {
-                    type: Type.STRING,
-                    description: "work | personal | learning | health",
-                  },
-                  targetDate: { type: Type.STRING },
-                  progress: { type: Type.INTEGER },
-                },
-                required: ["title", "category", "targetDate"],
-              },
-            },
-            suggestedAction: {
+      systemInstruction,
+      thinkingLevel: ThinkingLevel.LOW,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          reply: {
+            type: Type.STRING,
+            description: "رد المساعد الرقمي الشامل والعملي باللغة العربية",
+          },
+          suggestedTasks: {
+            type: Type.ARRAY,
+            items: {
               type: Type.OBJECT,
               properties: {
-                type: {
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                priority: { type: Type.STRING, description: "high | medium | low" },
+                category: {
                   type: Type.STRING,
-                  description: "start_focus | optimize_schedule | open_schedule | open_tasks | none",
+                  description: "work | personal | health | study | urgent",
                 },
-                label: { type: Type.STRING },
-                taskId: { type: Type.STRING },
+                estimatedMinutes: { type: Type.INTEGER },
+                dueDate: { type: Type.STRING },
+                dueTime: { type: Type.STRING },
               },
-              required: ["type", "label"],
+              required: ["title", "priority", "category"],
             },
           },
-          required: ["reply", "suggestedTasks", "suggestedEvents", "suggestedGoals", "suggestedAction"],
+          suggestedEvents: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                startTime: { type: Type.STRING, description: "HH:MM 24h" },
+                endTime: { type: Type.STRING, description: "HH:MM 24h" },
+                category: {
+                  type: Type.STRING,
+                  description: "deep_work | meeting | routine | health | personal | review",
+                },
+              },
+              required: ["title", "startTime", "endTime"],
+            },
+          },
+          suggestedGoals: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                category: {
+                  type: Type.STRING,
+                  description: "work | personal | learning | health",
+                },
+                targetDate: { type: Type.STRING },
+                progress: { type: Type.INTEGER },
+              },
+              required: ["title", "category", "targetDate"],
+            },
+          },
+          suggestedAction: {
+            type: Type.OBJECT,
+            properties: {
+              type: {
+                type: Type.STRING,
+                description: "start_focus | optimize_schedule | open_schedule | open_tasks | none",
+              },
+              label: { type: Type.STRING },
+              taskId: { type: Type.STRING },
+            },
+            required: ["type", "label"],
+          },
         },
+        required: ["reply", "suggestedTasks", "suggestedEvents", "suggestedGoals", "suggestedAction"],
       },
     });
 

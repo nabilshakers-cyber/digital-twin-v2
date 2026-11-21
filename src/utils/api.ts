@@ -242,8 +242,14 @@ export async function fetchServerJson<T>(
       throw new Error(fallbackError);
     }
 
-    // Cold-start gateway statuses (Render sleep/boot returns 502/503/504 while spinning up)
-    const isWakeupStatus = res.status === 502 || res.status === 503 || res.status === 504;
+    const rawText = await res.text();
+    const trimmed = rawText.trimStart();
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    const isJsonContent = contentType.includes('application/json');
+
+    // Cold-start gateway statuses (Render/gateway sleep returns non-JSON 502/503/504 while spinning up)
+    const isWakeupStatus =
+      (res.status === 502 || res.status === 503 || res.status === 504) && !isJsonContent;
     const remainingAfterRes = totalTimeoutMs - (Date.now() - startedAt);
     if (
       isWakeupStatus &&
@@ -264,10 +270,6 @@ export async function fetchServerJson<T>(
       await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
       continue;
     }
-
-    const rawText = await res.text();
-    const trimmed = rawText.trimStart();
-    const contentType = (res.headers.get('content-type') || '').toLowerCase();
 
     // Detect HTML returned instead of JSON (404 page, proxy/gateway error, or auth redirect)
     if (
