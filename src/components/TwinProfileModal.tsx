@@ -25,6 +25,7 @@ import {
   BatteryCharging,
   BellRing,
   AlertTriangle,
+  BookOpen,
 } from 'lucide-react';
 import type { AppAuthUser } from '../firebase';
 import {
@@ -80,6 +81,8 @@ interface TwinProfileModalProps {
   }) => void;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
+  comfortReadingEnabled?: boolean;
+  onToggleComfortReading?: () => void;
 }
 
 const ICONS = ['🧩', '📝', '✅', '📊', '🔥', '📚', '🌿', '⚡', '🕌', '💼', '🎯', '💡'];
@@ -120,6 +123,8 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
   onApplyCalendarSync,
   soundEnabled = true,
   onToggleSound,
+  comfortReadingEnabled = false,
+  onToggleComfortReading,
 }) => {
   const [settingsTab, setSettingsTab] = useState<'profile' | 'widgets' | 'cloud' | 'android'>(
     initialTab
@@ -669,6 +674,63 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                 );
               })()}
             </div>
+
+            {/* Comfortable Night Reading Mode Toggle */}
+            {onToggleComfortReading && (
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-amber-500/30 flex items-center justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div
+                    className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 mt-0.5 ${
+                      comfortReadingEnabled
+                        ? 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                        : 'bg-slate-900 border-slate-700 text-slate-400'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-slate-100">
+                        وضع القراءة المريحة (ليلي دافئ)
+                      </span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-md border font-semibold ${
+                          comfortReadingEnabled
+                            ? 'bg-amber-500/15 border-amber-500/50 text-amber-200'
+                            : 'bg-slate-900 border-slate-700 text-slate-400'
+                        }`}
+                      >
+                        {comfortReadingEnabled ? 'مفعّل' : 'معطّل'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                      يستبدل الخلفية الزرقاء الداكنة والنصوص البيضاء الساطعة بألوان دافئة متوازنة تقلل إجهاد العين أثناء القراءة الليلية الطويلة.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={comfortReadingEnabled}
+                  aria-label="تفعيل وضع القراءة المريحة"
+                  id="toggle-comfort-reading-mode"
+                  dir="ltr"
+                  onClick={onToggleComfortReading}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors cursor-pointer ${
+                    comfortReadingEnabled
+                      ? 'bg-amber-500 border-amber-400'
+                      : 'bg-slate-800 border-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      comfortReadingEnabled ? 'translate-x-5' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
 
             {/* Google Calendar Sync Settings Card */}
             {onApplyCalendarSync && (

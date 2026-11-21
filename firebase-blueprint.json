@@ -14,7 +14,7 @@
         },
         "profile": {
           "type": "object",
-          "description": "Digital Twin persona, productivity target, dailyEnergyLevel, focusSessionMinutes (5-180), and optional endOfDayOverloadAlertEnabled / endOfDayAlertTime configuration."
+          "description": "Digital Twin persona, productivity target, dailyEnergyLevel, focusSessionMinutes (5-180), comfortReadingMode (boolean), and optional endOfDayOverloadAlertEnabled / endOfDayAlertTime configuration."
         },
         "dashboardLayout": {
           "type": "array",

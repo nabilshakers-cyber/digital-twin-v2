@@ -100,6 +100,9 @@ function sanitizeProfile(p: DigitalTwinProfile): DigitalTwinProfile {
   if (p.focusSessionMinutes !== undefined) {
     sanitized.focusSessionMinutes = Math.round(clampNum(p.focusSessionMinutes, 5, 180, 25));
   }
+  if (p.comfortReadingMode !== undefined) {
+    sanitized.comfortReadingMode = Boolean(p.comfortReadingMode);
+  }
   return sanitized;
 }
 

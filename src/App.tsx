@@ -357,6 +357,15 @@ export default function App() {
     }
   }, [profile]);
 
+  // Apply Comfortable Night Reading Mode class on <html>
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle(
+      'comfort-reading-mode',
+      Boolean(profile.comfortReadingMode)
+    );
+  }, [profile.comfortReadingMode]);
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(tasks));
@@ -1955,6 +1964,15 @@ export default function App() {
           const next = !soundEnabled;
           setSoundEnabled(next);
           void runCloudMutation((uid) => syncWorkspaceFields(uid, { soundEnabled: next }));
+        }}
+        comfortReadingEnabled={Boolean(profile.comfortReadingMode)}
+        onToggleComfortReading={() => {
+          const nextProfile: DigitalTwinProfile = {
+            ...profile,
+            comfortReadingMode: !profile.comfortReadingMode,
+          };
+          setProfile(nextProfile);
+          void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: nextProfile }));
         }}
       />
 

@@ -117,3 +117,46 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* Comfortable Night Reading Mode (Low blue light, warm sepia-charcoal & soft cream text) */
+html.comfort-reading-mode {
+  --color-slate-950: #15120f;
+  --color-slate-900: #1f1a15;
+  --color-slate-800: #2c241c;
+  --color-slate-700: #40352a;
+  --color-slate-600: #5c4e3f;
+  --color-slate-500: #82715e;
+  --color-slate-400: #ab9882;
+  --color-slate-300: #ccbc9e;
+  --color-slate-200: #e0d1b6;
+  --color-slate-100: #ede0c8;
+  --color-slate-50: #f4ead6;
+  --color-white: #efe2c8;
+  color-scheme: dark;
+}
+
+html.comfort-reading-mode body {
+  background-color: #181410;
+  color: #ede0c8;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+html.comfort-reading-mode .bg-\[\#0a0e17\],
+html.comfort-reading-mode .bg-\[\#0a0f1d\] {
+  background-color: #181410 !important;
+}
+
+html.comfort-reading-mode .via-\[\#0a0f1d\] {
+  --tw-gradient-via: #1d1813 !important;
+}
+
+html.comfort-reading-mode ::-webkit-scrollbar-track {
+  background: rgba(29, 24, 19, 0.85);
+}
+
+html.comfort-reading-mode ::-webkit-scrollbar-thumb {
+  background: rgba(171, 152, 130, 0.35);
+}
+
+html.comfort-reading-mode ::-webkit-scrollbar-thumb:hover {
+  background: rgba(204, 188, 158, 0.55);
+}

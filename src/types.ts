@@ -65,6 +65,7 @@ export interface DigitalTwinProfile {
   endOfDayOverloadAlertEnabled?: boolean;
   endOfDayAlertTime?: string;
   focusSessionMinutes?: number;
+  comfortReadingMode?: boolean;
 }
 
 export interface ChatMessage {
