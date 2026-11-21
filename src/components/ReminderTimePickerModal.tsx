@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Bell, BellOff, Clock, Repeat, Sparkles, X } from 'lucide-react';
 import {
   cancelReminder,
+  NOTIFICATION_DENIED_ALERT_MESSAGE,
   ReminderItemCategory,
+  requestLocalNotificationPermissions,
   ScheduledLocalReminder,
   scheduleReminder,
 } from '../utils/localNotifications';
@@ -139,6 +141,7 @@ export const ReminderTimePickerModal: React.FC<ReminderTimePickerModalProps> = (
         targetDate.setDate(targetDate.getDate() + 1);
       }
 
+      const perm = await requestLocalNotificationPermissions();
       const scheduled = await scheduleReminder(
         target.notificationTitle,
         target.notificationBody,
@@ -151,10 +154,14 @@ export const ReminderTimePickerModal: React.FC<ReminderTimePickerModalProps> = (
       );
 
       onScheduled?.(scheduled);
+      if (perm === 'denied') {
+        setErrorMsg(NOTIFICATION_DENIED_ALERT_MESSAGE);
+        return;
+      }
       onClose();
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : 'تعذر جدولة التنبيه، يرجى التحقق من الصلاحيات.';
+        err instanceof Error ? err.message : NOTIFICATION_DENIED_ALERT_MESSAGE;
       setErrorMsg(message);
     } finally {
       setIsSaving(false);

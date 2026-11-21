@@ -18,7 +18,7 @@ import {
   LongTermGoal,
   ContextualBriefing,
 } from '../types';
-import { generateContextualBriefingWithAI } from '../utils/api';
+import { FRIENDLY_AI_CONNECTION_ERROR, generateContextualBriefingWithAI } from '../utils/api';
 import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface ContextualBriefingModalProps {
@@ -80,7 +80,8 @@ export const ContextualBriefingModal: React.FC<ContextualBriefingModalProps> = (
       setBriefing(data);
       onSaveBriefing(data);
     } catch (err: any) {
-      setError(err.message || 'تعذر توليد الموجز السياقي للمهمة');
+      console.error('[ContextualBriefingModal] generateContextualBriefingWithAI failed:', err);
+      setError(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsLoading(false);
     }
@@ -152,10 +153,10 @@ export const ContextualBriefingModal: React.FC<ContextualBriefingModalProps> = (
 
           {/* Loading */}
           {isLoading && (
-            <div className="py-12 text-center space-y-3">
+            <div className="py-12 text-center space-y-3" role="status" aria-live="polite">
               <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
-              <p className="text-xs text-slate-300 font-semibold">
-                نسختك الرقمية تقرأ السياق وتربط المهمة بأهدافك...
+              <p className="text-xs text-cyan-300 font-semibold animate-pulse">
+                جاري التفكير...
               </p>
             </div>
           )}

@@ -8,10 +8,12 @@ import {
   Clock, 
   ArrowLeft, 
   Lightbulb,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { Task, DigitalTwinProfile } from '../types';
-import { breakdownTaskWithAI } from '../utils/api';
+import { breakdownTaskWithAI, FRIENDLY_AI_CONNECTION_ERROR } from '../utils/api';
 import { useModalScrollLock } from '../utils/modalCoordinator';
 import confetti from 'canvas-confetti';
 
@@ -31,6 +33,7 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
   onApplySubtasks,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [breakdownData, setBreakdownData] = useState<{
     breakdownOverview: string;
     quickWinTip: string;
@@ -47,12 +50,14 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
       handleBreakdown();
     } else {
       setBreakdownData(null);
+      setErrorMsg(null);
     }
   }, [isOpen, task]);
 
   const handleBreakdown = async () => {
     if (!task) return;
     setIsLoading(true);
+    setErrorMsg(null);
     try {
       const data = await breakdownTaskWithAI({
         taskTitle: task.title,
@@ -62,7 +67,8 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
       });
       setBreakdownData(data);
     } catch (e) {
-      console.error(e);
+      console.error('[TaskBreakdownModal] breakdownTaskWithAI failed:', e);
+      setErrorMsg(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsLoading(false);
     }
@@ -135,9 +141,29 @@ export const TaskBreakdownModal: React.FC<TaskBreakdownModalProps> = ({
 
           {/* Loading State */}
           {isLoading && (
-            <div className="py-12 text-center space-y-3">
+            <div className="py-12 text-center space-y-3" role="status" aria-live="polite">
               <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
-              <p className="text-xs text-slate-300 font-semibold">جاري التفكير وتفكيك الحمل الذهني للمهمة...</p>
+              <p className="text-xs text-cyan-300 font-semibold animate-pulse">
+                جاري التفكير...
+              </p>
+            </div>
+          )}
+
+          {/* Friendly Connection Error */}
+          {!isLoading && errorMsg && (
+            <div className="p-4 rounded-2xl bg-rose-950/50 border border-rose-700/60 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-3">
+              <span className="flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{errorMsg}</span>
+              </span>
+              <button
+                type="button"
+                onClick={handleBreakdown}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold cursor-pointer shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>إعادة المحاولة</span>
+              </button>
             </div>
           )}
 

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Edit3,
   ExternalLink,
   FolderPlus,
@@ -18,6 +19,12 @@ import {
   normalizeDeepLink,
   openNativeApp,
 } from '../utils/nativeAppLauncher';
+import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
+import {
+  normalizeLegacyPhoneAppIcon,
+  OFFICIAL_PHONE_APP_ICONS,
+  PhoneAppIcon,
+} from './PhoneAppIcon';
 
 interface PhoneAppsLauncherViewProps {
   lists: PhoneAppList[];
@@ -66,7 +73,17 @@ const COLOR_STYLES: Record<
 };
 
 const LIST_ICONS = ['📱', '🕌', '💼', '💬', '🧭', '📚', '🏠', '⚡', '🎧', '💳', '🛠️', '🌟'];
-const APP_ICONS = ['📱', '🎙️', '📖', '💚', '✈️', '✉️', '📅', '📝', '📓', '🗺️', '▶️', '📞', '🎵', '🌐', '📸', '💼'];
+const APP_ICONS = [
+  ...OFFICIAL_PHONE_APP_ICONS,
+  '📱',
+  '📚',
+  '💼',
+  '🏠',
+  '⚡',
+  '🎧',
+  '💳',
+  '🌟',
+];
 
 export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   lists,
@@ -90,38 +107,66 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   const [listTitle, setListTitle] = useState('');
   const [listIcon, setListIcon] = useState('📱');
   const [listColor, setListColor] = useState<CustomWidgetColor>('cyan');
+  const [listFormError, setListFormError] = useState<string | null>(null);
 
   // Add / Edit App state
   const [isAppFormOpen, setIsAppFormOpen] = useState(false);
   const [targetListId, setTargetListId] = useState<string>(lists[0]?.id || '');
+  const [originalListId, setOriginalListId] = useState<string | null>(null);
   const [editingAppId, setEditingAppId] = useState<string | null>(null);
   const [appName, setAppName] = useState('');
   const [appIcon, setAppIcon] = useState('📱');
   const [appDeepLink, setAppDeepLink] = useState('');
   const [appFallbackUrl, setAppFallbackUrl] = useState('');
   const [appNote, setAppNote] = useState('');
+  const [appFormError, setAppFormError] = useState<string | null>(null);
+
+  useModalCloseListener('phone-apps-launcher', () => {
+    setIsListFormOpen(false);
+    setIsAppFormOpen(false);
+  });
+
+  useEffect(() => {
+    if (!isListFormOpen && !isAppFormOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsListFormOpen(false);
+        setIsAppFormOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isListFormOpen, isAppFormOpen]);
 
   const openAddListForm = () => {
+    broadcastCloseAllModals('phone-apps-launcher');
     setEditingListId(null);
     setListTitle('');
     setListIcon('📱');
     setListColor('cyan');
+    setListFormError(null);
     setIsAppFormOpen(false);
-    setIsListFormOpen((v) => (editingListId ? true : !v));
+    setIsListFormOpen(true);
   };
 
   const openEditListForm = (list: PhoneAppList) => {
+    broadcastCloseAllModals('phone-apps-launcher');
     setEditingListId(list.id);
     setListTitle(list.title);
     setListIcon(list.icon);
     setListColor(list.color);
+    setListFormError(null);
     setIsAppFormOpen(false);
     setIsListFormOpen(true);
   };
 
   const handleSaveList = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!listTitle.trim()) return;
+    if (!listTitle.trim()) {
+      setListFormError('يرجى كتابة اسم القائمة أولاً.');
+      return;
+    }
+    setListFormError(null);
 
     if (editingListId) {
       const existing = lists.find((l) => l.id === editingListId);
@@ -148,25 +193,31 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
   };
 
   const openAddAppForm = (preferredListId?: string) => {
+    broadcastCloseAllModals('phone-apps-launcher');
     setEditingAppId(null);
+    setOriginalListId(null);
     setTargetListId(preferredListId || (selectedListFilter !== 'all' ? selectedListFilter : lists[0]?.id || ''));
     setAppName('');
     setAppIcon('📱');
     setAppDeepLink('');
     setAppFallbackUrl('');
     setAppNote('');
+    setAppFormError(null);
     setIsListFormOpen(false);
     setIsAppFormOpen(true);
   };
 
   const openEditAppForm = (listId: string, app: PhoneAppShortcut) => {
+    broadcastCloseAllModals('phone-apps-launcher');
     setEditingAppId(app.id);
+    setOriginalListId(listId);
     setTargetListId(listId);
     setAppName(app.name);
-    setAppIcon(app.icon || '📱');
+    setAppIcon(normalizeLegacyPhoneAppIcon(app));
     setAppDeepLink(app.deepLink);
     setAppFallbackUrl(app.fallbackUrl || '');
     setAppNote(app.note || '');
+    setAppFormError(null);
     setIsListFormOpen(false);
     setIsAppFormOpen(true);
   };
@@ -177,11 +228,24 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
     setAppDeepLink(preset.deepLink);
     setAppFallbackUrl(preset.fallbackUrl || '');
     setAppNote(preset.note);
+    setAppFormError(null);
   };
 
   const handleSaveApp = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!appName.trim() || !appDeepLink.trim() || !targetListId) return;
+    if (!appName.trim()) {
+      setAppFormError('يرجى كتابة اسم التطبيق أولاً.');
+      return;
+    }
+    if (!appDeepLink.trim()) {
+      setAppFormError('يرجى إدخال رابط فتح التطبيق أولاً.');
+      return;
+    }
+    if (!targetListId) {
+      setAppFormError('يرجى اختيار القائمة أولاً.');
+      return;
+    }
+    setAppFormError(null);
 
     const payload: Omit<PhoneAppShortcut, 'id'> = {
       name: appName.trim(),
@@ -192,16 +256,22 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
     };
 
     if (editingAppId) {
-      onUpdateAppInList(targetListId, {
-        id: editingAppId,
-        ...payload,
-      });
+      if (originalListId && originalListId !== targetListId) {
+        onDeleteAppFromList(originalListId, editingAppId);
+        onAddAppToList(targetListId, payload);
+      } else {
+        onUpdateAppInList(targetListId, {
+          id: editingAppId,
+          ...payload,
+        });
+      }
     } else {
       onAddAppToList(targetListId, payload);
     }
 
     setIsAppFormOpen(false);
     setEditingAppId(null);
+    setOriginalListId(null);
     setAppName('');
     setAppDeepLink('');
     setAppFallbackUrl('');
@@ -419,140 +489,181 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
         </div>
       )}
 
-      {/* Add / Edit List Form */}
+      {/* Add / Edit List Modal */}
       {isListFormOpen && (
-        <form
-          onSubmit={handleSaveList}
-          className="bg-slate-950/80 border border-cyan-700/50 rounded-2xl p-4 space-y-3 animate-fadeIn"
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setIsListFormOpen(false)}
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span className="text-xs font-bold text-cyan-300">
-              {editingListId ? 'تعديل القائمة' : 'إنشاء قائمة تطبيقات جديدة'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setIsListFormOpen(false)}
-              className="text-slate-400 hover:text-slate-200 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="sm:col-span-2 space-y-1">
-              <label className="text-xs font-semibold text-slate-300">اسم القائمة *</label>
-              <input
-                type="text"
-                required
-                placeholder="مثال: قائمة تطبيقات البنوك والخدمات / قائمة الدراسة"
-                value={listTitle}
-                onChange={(e) => setListTitle(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
+          <form
+            onSubmit={handleSaveList}
+            noValidate
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-slate-900 border border-cyan-600/50 rounded-2xl p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <span className="text-sm font-bold text-cyan-300 flex items-center gap-2">
+                <Edit3 className="w-4 h-4" />
+                <span>{editingListId ? 'تعديل القائمة' : 'إنشاء قائمة تطبيقات جديدة'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsListFormOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+                aria-label="إغلاق"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">أيقونة القائمة</label>
-              <div className="flex flex-wrap gap-1 bg-slate-900 border border-slate-800 rounded-xl p-2">
-                {LIST_ICONS.map((ic) => (
-                  <button
-                    key={ic}
-                    type="button"
-                    onClick={() => setListIcon(ic)}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm cursor-pointer ${
-                      listIcon === ic ? 'bg-cyan-600/30 border border-cyan-400' : 'hover:bg-slate-800'
-                    }`}
-                  >
-                    {ic}
-                  </button>
-                ))}
+            {listFormError && (
+              <div className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-950/50 px-3 py-2 text-xs text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{listFormError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2 space-y-1">
+                <label className="text-xs font-semibold text-slate-300">اسم القائمة *</label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="مثال: قائمة تطبيقات البنوك والخدمات / قائمة الدراسة"
+                  value={listTitle}
+                  onChange={(e) => {
+                    setListTitle(e.target.value);
+                    if (listFormError && e.target.value.trim()) setListFormError(null);
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">أيقونة القائمة</label>
+                <div className="flex flex-wrap gap-1 bg-slate-950 border border-slate-800 rounded-xl p-2">
+                  {LIST_ICONS.map((ic) => (
+                    <button
+                      key={ic}
+                      type="button"
+                      onClick={() => setListIcon(ic)}
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm cursor-pointer ${
+                        listIcon === ic ? 'bg-cyan-600/30 border border-cyan-400' : 'hover:bg-slate-800'
+                      }`}
+                    >
+                      {ic}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">لون القائمة</label>
+                <select
+                  value={listColor}
+                  onChange={(e) => setListColor(e.target.value as CustomWidgetColor)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="cyan">سماوي</option>
+                  <option value="emerald">زمردي</option>
+                  <option value="indigo">نيلي</option>
+                  <option value="amber">ذهبي</option>
+                  <option value="rose">وردي</option>
+                </select>
               </div>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">لون القائمة</label>
-              <select
-                value={listColor}
-                onChange={(e) => setListColor(e.target.value as CustomWidgetColor)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsListFormOpen(false)}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer"
               >
-                <option value="cyan">سماوي</option>
-                <option value="emerald">زمردي</option>
-                <option value="indigo">نيلي</option>
-                <option value="amber">ذهبي</option>
-                <option value="rose">وردي</option>
-              </select>
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold cursor-pointer"
+              >
+                {editingListId ? 'حفظ تعديل القائمة' : 'إنشاء القائمة'}
+              </button>
             </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsListFormOpen(false)}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs cursor-pointer"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold cursor-pointer"
-            >
-              {editingListId ? 'حفظ تعديل القائمة' : 'إنشاء القائمة'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       )}
 
-      {/* Add / Edit App Form */}
+      {/* Add / Edit App Modal */}
       {isAppFormOpen && (
-        <form
-          onSubmit={handleSaveApp}
-          className="bg-slate-950/85 border border-indigo-700/50 rounded-2xl p-4 space-y-3 animate-fadeIn"
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setIsAppFormOpen(false)}
         >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span className="text-xs font-bold text-indigo-300">
-              {editingAppId ? 'تعديل اختصار التطبيق' : 'إضافة تطبيق من هاتفك إلى القائمة'}
-            </span>
-            <button
-              type="button"
-              onClick={() => setIsAppFormOpen(false)}
-              className="text-slate-400 hover:text-slate-200 cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Popular App Presets */}
-          {!editingAppId && (
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>اختر تطبيقاً شائعاً للتعبئة التلقائية أو أدخل رابط التطبيق يدوياً:</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {POPULAR_PHONE_APP_PRESETS.map((preset) => (
-                  <button
-                    key={preset.name}
-                    type="button"
-                    onClick={() => applyPreset(preset)}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] text-slate-200 flex items-center gap-1 cursor-pointer transition-colors"
-                  >
-                    <span>{preset.icon}</span>
-                    <span>{preset.name}</span>
-                  </button>
-                ))}
-              </div>
+          <form
+            onSubmit={handleSaveApp}
+            noValidate
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xl max-h-[90vh] overflow-y-auto bg-slate-900 border border-indigo-600/50 rounded-2xl p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <span className="text-sm font-bold text-indigo-300 flex items-center gap-2">
+                <Edit3 className="w-4 h-4" />
+                <span>{editingAppId ? 'تعديل اختصار التطبيق' : 'إضافة تطبيق من هاتفك إلى القائمة'}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsAppFormOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+                aria-label="إغلاق"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {appFormError && (
+              <div className="flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-950/50 px-3 py-2 text-xs text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{appFormError}</span>
+              </div>
+            )}
+
+            {/* Popular App Presets */}
             {!editingAppId && (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>اختر تطبيقاً شائعاً للتعبئة التلقائية أو أدخل رابط التطبيق يدوياً:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {POPULAR_PHONE_APP_PRESETS.map((preset) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-[11px] text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <PhoneAppIcon
+                        name={preset.name}
+                        icon={preset.icon}
+                        deepLink={preset.deepLink}
+                        className="w-4 h-4"
+                        emojiClassName="text-xs leading-none"
+                      />
+                      <span>{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300">إضافة إلى قائمة *</label>
+                <label className="text-xs font-semibold text-slate-300">
+                  {editingAppId ? 'القائمة التابع لها *' : 'إضافة إلى قائمة *'}
+                </label>
                 <select
                   value={targetListId}
                   onChange={(e) => setTargetListId(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
                 >
                   {lists.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -561,95 +672,102 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                   ))}
                 </select>
               </div>
-            )}
 
-            <div className={`space-y-1 ${editingAppId ? 'sm:col-span-2' : ''}`}>
-              <label className="text-xs font-semibold text-slate-300">اسم التطبيق *</label>
-              <input
-                type="text"
-                required
-                placeholder="مثال: واتساب / ترتيل / نوشن"
-                value={appName}
-                onChange={(e) => setAppName(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">اسم التطبيق *</label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="مثال: واتساب / ترتيل / نوشن"
+                  value={appName}
+                  onChange={(e) => {
+                    setAppName(e.target.value);
+                    if (appFormError && e.target.value.trim()) setAppFormError(null);
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">
-                رابط فتح التطبيق المباشر (Deep Link / URI) *
-              </label>
-              <input
-                type="text"
-                required
-                dir="ltr"
-                placeholder="whatsapp://  أو  https://tarteel.ai/  أو  tel:"
-                value={appDeepLink}
-                onChange={(e) => setAppDeepLink(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
-              />
-            </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">
+                  رابط فتح التطبيق المباشر (Deep Link / URI) *
+                </label>
+                <input
+                  type="text"
+                  dir="ltr"
+                  placeholder="whatsapp://  أو  https://tarteel.ai/  أو  tel:"
+                  value={appDeepLink}
+                  onChange={(e) => {
+                    setAppDeepLink(e.target.value);
+                    if (appFormError && e.target.value.trim()) setAppFormError(null);
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
+                />
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">
-                رابط المتصفح البديل (اختياري)
-              </label>
-              <input
-                type="url"
-                dir="ltr"
-                placeholder="https://..."
-                value={appFallbackUrl}
-                onChange={(e) => setAppFallbackUrl(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
-              />
-            </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">
+                  رابط المتصفح البديل (اختياري)
+                </label>
+                <input
+                  type="url"
+                  dir="ltr"
+                  placeholder="https://..."
+                  value={appFallbackUrl}
+                  onChange={(e) => setAppFallbackUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500 font-mono"
+                />
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">وصف مختصر (اختياري)</label>
-              <input
-                type="text"
-                placeholder="مثال: مراجعة الورد اليومي"
-                value={appNote}
-                onChange={(e) => setAppNote(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-xs font-semibold text-slate-300">وصف مختصر (اختياري)</label>
+                <input
+                  type="text"
+                  placeholder="مثال: مراجعة الورد اليومي"
+                  value={appNote}
+                  onChange={(e) => setAppNote(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">الأيقونة</label>
-              <div className="flex flex-wrap gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1.5">
-                {APP_ICONS.map((ic) => (
-                  <button
-                    key={ic}
-                    type="button"
-                    onClick={() => setAppIcon(ic)}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm cursor-pointer ${
-                      appIcon === ic ? 'bg-cyan-600/30 border border-cyan-400' : 'hover:bg-slate-800'
-                    }`}
-                  >
-                    {ic}
-                  </button>
-                ))}
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-xs font-semibold text-slate-300">الأيقونة</label>
+                <div className="flex flex-wrap gap-1.5 bg-slate-950 border border-slate-800 rounded-xl p-2">
+                  {APP_ICONS.map((ic) => (
+                    <button
+                      key={ic}
+                      type="button"
+                      onClick={() => setAppIcon(ic)}
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm cursor-pointer transition-colors ${
+                        appIcon === ic
+                          ? 'bg-cyan-600/30 border border-cyan-400 ring-1 ring-cyan-400/40'
+                          : 'hover:bg-slate-800 border border-transparent'
+                      }`}
+                    >
+                      <PhoneAppIcon icon={ic} className="w-5 h-5" emojiClassName="text-sm leading-none" />
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsAppFormOpen(false)}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs cursor-pointer"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
-            >
-              {editingAppId ? 'حفظ التعديلات' : 'إضافة التطبيق للقائمة'}
-            </button>
-          </div>
-        </form>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAppFormOpen(false)}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
+              >
+                {editingAppId ? 'حفظ التعديلات' : 'إضافة التطبيق للقائمة'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Lists Grid */}
@@ -688,28 +806,41 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => openAddAppForm(list.id)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openAddAppForm(list.id);
+                      }}
                       className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-800 cursor-pointer"
                       title="إضافة تطبيق لهذه القائمة"
+                      aria-label={`إضافة تطبيق لقائمة ${list.title}`}
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => openEditListForm(list)}
-                      className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 cursor-pointer"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openEditListForm(list);
+                      }}
+                      className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 cursor-pointer transition-colors"
                       title="تعديل القائمة"
+                      aria-label={`تعديل قائمة ${list.title}`}
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
                         if (selectedListFilter === list.id) setSelectedListFilter('all');
                         onDeleteList(list.id);
                       }}
                       className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950 text-slate-400 hover:text-rose-300 border border-slate-800 cursor-pointer"
                       title="حذف القائمة"
+                      aria-label={`حذف قائمة ${list.title}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -741,8 +872,14 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                               className="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer"
                               title={`الدخول إلى ${app.name}`}
                             >
-                              <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-xl shrink-0 shadow-inner">
-                                {app.icon}
+                              <div className="w-10 h-10 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center shrink-0 shadow-inner">
+                                <PhoneAppIcon
+                                  id={app.id}
+                                  name={app.name}
+                                  icon={app.icon}
+                                  deepLink={app.deepLink}
+                                  className="w-7 h-7"
+                                />
                               </div>
                               <div className="min-w-0">
                                 <div className="text-xs font-bold text-slate-100 group-hover:text-white truncate flex items-center gap-1">
@@ -760,19 +897,29 @@ export const PhoneAppsLauncherView: React.FC<PhoneAppsLauncherViewProps> = ({
                             <div className="flex items-center gap-1 shrink-0">
                               <button
                                 type="button"
-                                onClick={() => openEditAppForm(list.id, app)}
-                                className="p-1 rounded-md text-slate-500 hover:text-cyan-300 hover:bg-slate-800 cursor-pointer"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  openEditAppForm(list.id, app);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 cursor-pointer transition-colors"
                                 title="تعديل التطبيق"
+                                aria-label={`تعديل ${app.name}`}
                               >
-                                <Edit3 className="w-3 h-3" />
+                                <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 type="button"
-                                onClick={() => onDeleteAppFromList(list.id, app.id)}
-                                className="p-1 rounded-md text-slate-500 hover:text-rose-400 hover:bg-slate-800 cursor-pointer"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  onDeleteAppFromList(list.id, app.id);
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 cursor-pointer transition-colors"
                                 title="حذف التطبيق"
+                                aria-label={`حذف ${app.name}`}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>

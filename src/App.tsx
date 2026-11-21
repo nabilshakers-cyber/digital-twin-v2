@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Sparkles } from 'lucide-react';
+import { BellOff, Bot, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
 import { 
   defaultProfile, 
   defaultTasks, 
@@ -21,6 +21,7 @@ import {
   PhoneAppShortcut
 } from './types';
 import { DEFAULT_DASHBOARD_LAYOUT, INITIAL_PHONE_APP_LISTS } from './data/dashboardDefaults';
+import { normalizeLegacyPhoneAppIcon } from './components/PhoneAppIcon';
 import { Navbar, type AppNavTab } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { TasksHubView } from './components/TasksHubView';
@@ -35,21 +36,36 @@ import { DailyBriefingModal } from './components/DailyBriefingModal';
 import { ContextualBriefingModal } from './components/ContextualBriefingModal';
 import { SmartReminderToasts } from './components/SmartReminderToasts';
 import { OfflineIndicator } from './components/OfflineIndicator';
-import { classifyTasksWithAI, optimizeScheduleWithAI } from './utils/api';
+import {
+  classifyTasksWithAI,
+  FRIENDLY_AI_CONNECTION_ERROR,
+  optimizeScheduleWithAI,
+} from './utils/api';
 import { soundEngine } from './utils/audioSynth';
 import { playToneForReminder } from './utils/notificationTones';
 import { broadcastCloseAllModals, useModalCloseListener } from './utils/modalCoordinator';
 import {
   cancelReminder,
   initializeLocalNotifications,
+  NOTIFICATION_DENIED_ALERT_MESSAGE,
+  NOTIFICATION_DENIED_EVENT,
   requestLocalNotificationPermissions,
 } from './utils/localNotifications';
 import { onAuthStateChanged } from 'firebase/auth';
+import { AuthScreen } from './components/AuthScreen';
+import { OnboardingScreen } from './components/OnboardingScreen';
+import {
+  buildPersonalizedWorkspaceFromOnboarding,
+  hasUserCompletedOnboarding,
+  markOnboardingCompleted,
+  type OnboardingChoices,
+} from './utils/onboardingPersonalization';
 import {
   auth,
-  getSavedLocalAuthUser,
-  signInInApp,
+  clearLocalAuthUser,
+  signInWithGoogle,
   signOutUser,
+  toAppAuthUser,
   type AppAuthUser,
 } from './firebase';
 import {
@@ -111,6 +127,47 @@ const STORAGE_KEYS = {
   TWIN_TOP_CLOUD_MIGRATED: 'digital_twin_twin_top_cloud_migrated_v1',
 };
 
+const SWIPEABLE_TABS: ReadonlyArray<{
+  id: AppNavTab;
+  label: string;
+}> = [
+  { id: 'dashboard', label: 'الرئيسية' },
+  { id: 'tasks', label: 'المهام' },
+  { id: 'schedule', label: 'الجدول' },
+  { id: 'focus', label: 'التركيز' },
+  { id: 'notifications', label: 'الإشعارات' },
+  { id: 'settings', label: 'الإعدادات' },
+];
+
+function shouldIgnoreSwipeTarget(
+  target: EventTarget | null,
+  container: HTMLElement | null
+): boolean {
+  if (!(target instanceof HTMLElement || target instanceof SVGElement)) {
+    return false;
+  }
+  if (
+    target.closest(
+      'input, textarea, select, option, button, [role="dialog"], .recharts-wrapper, .recharts-surface, [data-no-swipe="true"]'
+    )
+  ) {
+    return true;
+  }
+  let current: HTMLElement | null =
+    target instanceof HTMLElement ? target : target.parentElement;
+  while (current && current !== container) {
+    const style = window.getComputedStyle(current);
+    if (
+      (style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+      current.scrollWidth > current.clientWidth + 4
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
 function mergeAndPromoteTwinLayout(
   layout: DashboardLayoutEntry[],
   migrationKey: string
@@ -146,6 +203,16 @@ function mergeAndPromoteTwinLayout(
     merged: [promotedTwin, ...withoutTwin],
     didPromote: true,
   };
+}
+
+function normalizePhoneAppLists(lists: PhoneAppList[]): PhoneAppList[] {
+  return lists.map((list) => ({
+    ...list,
+    apps: (list.apps || []).map((app) => ({
+      ...app,
+      icon: normalizeLegacyPhoneAppIcon(app),
+    })),
+  }));
 }
 
 export default function App() {
@@ -239,7 +306,7 @@ export default function App() {
   const [phoneAppLists, setPhoneAppLists] = useState<PhoneAppList[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.PHONE_APP_LISTS);
-      return saved ? JSON.parse(saved) : INITIAL_PHONE_APP_LISTS;
+      return normalizePhoneAppLists(saved ? JSON.parse(saved) : INITIAL_PHONE_APP_LISTS);
     } catch {
       return INITIAL_PHONE_APP_LISTS;
     }
@@ -254,6 +321,7 @@ export default function App() {
       raw === 'schedule' ||
       raw === 'focus' ||
       raw === 'notifications' ||
+      raw === 'settings' ||
       raw === 'dashboard'
     ) {
       return raw;
@@ -268,15 +336,17 @@ export default function App() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInitialPrompt, setChatInitialPrompt] = useState<string | undefined>();
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'widgets' | 'cloud' | 'android'>('profile');
   const [isFocusOpen, setIsFocusOpen] = useState(false);
 
-  // 3.5 Local / Firebase Auth & Cloud Sync State
-  const [authUser, setAuthUser] = useState<AppAuthUser | null>(() => getSavedLocalAuthUser());
+  // 3.5 Firebase Auth, First-Run Onboarding & Cloud Sync State
+  const [authUser, setAuthUser] = useState<AppAuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<boolean>(() =>
+    hasUserCompletedOnboarding()
+  );
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'local' | 'syncing' | 'synced' | 'error'>('local');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [asyncCloudError, setAsyncCloudError] = useState<unknown>(null);
@@ -296,6 +366,7 @@ export default function App() {
 
   // 4. AI Schedule Optimization state
   const [isOptimizingSchedule, setIsOptimizingSchedule] = useState(false);
+  const [optimizeScheduleError, setOptimizeScheduleError] = useState<string | null>(null);
   const [optimizationResult, setOptimizationResult] = useState<{
     summary: string;
     energyStrategy: string;
@@ -318,6 +389,9 @@ export default function App() {
   const [testToasts, setTestToasts] = useState<SmartReminder[]>([]);
   const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>(() =>
     getPushPermission()
+  );
+  const [showNotificationDeniedBanner, setShowNotificationDeniedBanner] = useState<boolean>(
+    () => getPushPermission() === 'denied'
   );
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
     try {
@@ -447,20 +521,14 @@ export default function App() {
     autoDndEnabled,
   };
 
-  // Firebase Auth listener (preserves in-app local session when not signed in via Firebase)
+  // Firebase Auth listener (enforces strict Firebase session before accessing the app)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (fbUser) => {
       if (fbUser) {
-        setAuthUser({
-          uid: fbUser.uid,
-          displayName: fbUser.displayName,
-          email: fbUser.email,
-          photoURL: fbUser.photoURL,
-          mode: 'firebase',
-        });
+        clearLocalAuthUser();
+        setAuthUser(toAppAuthUser(fbUser));
       } else {
-        const localUser = getSavedLocalAuthUser();
-        setAuthUser(localUser);
+        setAuthUser(null);
         setCloudSyncStatus('local');
       }
       setAuthReady(true);
@@ -468,9 +536,16 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Firestore real-time synchronization (active only when signed in with Firebase Auth)
+  // Firestore real-time synchronization (active when signed in & verified with Firebase Auth)
   useEffect(() => {
-    if (!authReady || !authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
+    if (
+      !authReady ||
+      !authUser ||
+      !authUser.emailVerified ||
+      !auth.currentUser
+    ) {
+      return;
+    }
 
     let cancelled = false;
     let unsubCloud: (() => void) | undefined;
@@ -507,7 +582,7 @@ export default function App() {
           onGoals: (cloudGoals) => setGoals(cloudGoals),
           onQuranRoutine: (cloudQuran) => setQuranRoutine(cloudQuran),
           onCustomWidgets: (cloudWidgets) => setCustomWidgets(cloudWidgets),
-          onPhoneAppLists: (cloudLists) => setPhoneAppLists(cloudLists),
+          onPhoneAppLists: (cloudLists) => setPhoneAppLists(normalizePhoneAppLists(cloudLists)),
           onSyncedPulse: () => {
             setCloudSyncStatus('synced');
             setLastSyncedAt(
@@ -539,7 +614,7 @@ export default function App() {
   }, [authReady, authUser]);
 
   const runCloudMutation = async (fn: (uid: string) => Promise<void>) => {
-    if (!authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
+    if (!authUser || !authUser.emailVerified || !auth.currentUser) return;
     setCloudSyncStatus('syncing');
     try {
       await fn(authUser.uid);
@@ -560,12 +635,10 @@ export default function App() {
   const closeAllModals = (broadcast = true) => {
     setIsChatOpen(false);
     setIsQuickAddOpen(false);
-    setIsProfileOpen(false);
     setIsFocusOpen(false);
     setIsBreakdownOpen(false);
     setIsBriefingOpen(false);
     setIsContextualBriefingOpen(false);
-    setCurrentTab((prev) => (prev === 'focus' ? 'dashboard' : prev));
     if (broadcast) {
       broadcastCloseAllModals('app');
     }
@@ -589,7 +662,13 @@ export default function App() {
   const openProfileModal = (tab: 'profile' | 'widgets' | 'cloud' | 'android' = 'profile') => {
     closeAllModals();
     setProfileInitialTab(tab);
-    setIsProfileOpen(true);
+    setCurrentTab('settings');
+    if (typeof window !== 'undefined') {
+      const targetHash = '#/settings';
+      if (window.location.hash !== targetHash) {
+        window.location.hash = targetHash;
+      }
+    }
   };
 
   const openFocusModal = (task?: Task) => {
@@ -618,9 +697,6 @@ export default function App() {
 
   const handleNavigateTab = (tab: AppNavTab) => {
     closeAllModals();
-    if (tab === 'focus') {
-      setIsFocusOpen(true);
-    }
     setCurrentTab(tab);
     if (typeof window !== 'undefined') {
       const targetHash = `#/${tab}`;
@@ -634,34 +710,22 @@ export default function App() {
     const onHashChange = () => {
       const tabFromHash = parseTabFromHash();
       closeAllModals();
-      if (tabFromHash === 'focus') {
-        setIsFocusOpen(true);
-      }
       setCurrentTab(tabFromHash);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  const handleSignIn = async (
-    displayName?: string,
-    email?: string,
-    preferCloudPopup = false
-  ) => {
+  const handleSignIn = async () => {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const user = await signInInApp(
-        displayName || profile.name,
-        email,
-        preferCloudPopup
-      );
+      const user = await signInWithGoogle();
       setAuthUser(user);
-      setCloudSyncStatus(user.mode === 'local' ? 'local' : 'syncing');
+      setCloudSyncStatus('syncing');
     } catch (err: any) {
       console.error('Sign-In failed:', err);
       setAuthError(err?.message || 'تعذر تسجيل الدخول.');
-      openProfileModal('cloud');
     } finally {
       setAuthLoading(false);
     }
@@ -673,22 +737,95 @@ export default function App() {
       await signOutUser();
       setAuthUser(null);
       setCloudSyncStatus('local');
+      setLastSyncedAt(null);
       setAuthError(null);
       closeAllModals();
       setCurrentTab('dashboard');
+
+      // Reset user-scoped local caches (preserve hasCompletedOnboarding so onboarding shows only once)
+      try {
+        localStorage.removeItem(STORAGE_KEYS.PROFILE);
+        localStorage.removeItem(STORAGE_KEYS.TASKS);
+        localStorage.removeItem(STORAGE_KEYS.SCHEDULE);
+        localStorage.removeItem(STORAGE_KEYS.GOALS);
+        localStorage.removeItem(STORAGE_KEYS.QURAN_ROUTINE);
+        localStorage.removeItem(STORAGE_KEYS.CUSTOM_WIDGETS);
+        localStorage.removeItem(STORAGE_KEYS.DASHBOARD_LAYOUT);
+        localStorage.removeItem(STORAGE_KEYS.PHONE_APP_LISTS);
+        localStorage.removeItem(ADHKAR_STORAGE_KEY);
+      } catch {
+        // ignore storage cleanup errors
+      }
+      setProfile(defaultProfile);
+      setTasks(defaultTasks);
+      setSchedule(defaultSchedule);
+      setGoals(initialGoals);
+      setQuranRoutine(initialQuranRoutine);
+      setCustomWidgets([]);
+      setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
+      setPhoneAppLists(INITIAL_PHONE_APP_LISTS);
+      setAdhkarState(loadInitialAdhkarState());
     } finally {
       setAuthLoading(false);
     }
   };
 
+  const handleCompleteOnboarding = (choices: OnboardingChoices) => {
+    const {
+      profile: nextProfile,
+      dashboardLayout: nextLayout,
+      quranNotificationsEnabled: nextQuranNotif,
+    } = buildPersonalizedWorkspaceFromOnboarding(choices, profile, dashboardLayout);
+
+    setProfile(nextProfile);
+    setDashboardLayout(nextLayout);
+    setQuranNotificationsEnabled(nextQuranNotif);
+    markOnboardingCompleted();
+    setHasCompletedOnboarding(true);
+
+    void runCloudMutation(async (uid) => {
+      await ensureUserWorkspace(uid, {
+        ...latestSnapshotRef.current,
+        profile: nextProfile,
+        dashboardLayout: nextLayout,
+        quranNotificationsEnabled: nextQuranNotif,
+      });
+      await syncWorkspaceFields(uid, {
+        profile: nextProfile,
+        dashboardLayout: nextLayout,
+        quranNotificationsEnabled: nextQuranNotif,
+      });
+    });
+  };
+
   const handlePushLocalToCloud = async () => {
-    if (!authUser || authUser.mode !== 'firebase' || !auth.currentUser) return;
+    if (!authUser || !authUser.emailVerified || !auth.currentUser) return;
     await runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, latestSnapshotRef.current));
   };
 
   // Request Capacitor LocalNotifications permissions on startup and restore reminder timers
   useEffect(() => {
-    void initializeLocalNotifications();
+    let active = true;
+    void initializeLocalNotifications().then((status) => {
+      if (!active) return;
+      if (status === 'denied') {
+        setPushPermission('denied');
+        setShowNotificationDeniedBanner(true);
+      } else if (status === 'granted') {
+        setPushPermission('granted');
+        setShowNotificationDeniedBanner(false);
+      }
+    });
+
+    const handleDeniedEvent = () => {
+      setPushPermission('denied');
+      setShowNotificationDeniedBanner(true);
+    };
+    window.addEventListener(NOTIFICATION_DENIED_EVENT, handleDeniedEvent);
+    return () => {
+      active = false;
+      window.removeEventListener(NOTIFICATION_DENIED_EVENT, handleDeniedEvent);
+    };
   }, []);
 
   // Poll every 30 seconds for approaching/overdue reminders
@@ -1067,6 +1204,7 @@ export default function App() {
   // AI Auto-Schedule Optimizer
   const handleOptimizeSchedule = async () => {
     setIsOptimizingSchedule(true);
+    setOptimizeScheduleError(null);
     try {
       const fixedEvents = schedule.filter((b) => b.isFixed);
       const pendingTasks = tasks.filter((t) => t.status !== 'completed');
@@ -1097,7 +1235,7 @@ export default function App() {
       }
     } catch (e: any) {
       console.error(e);
-      setAuthError('تعذر تحسين الجدول حالياً: ' + (e.message || 'خطأ في الاتصال بالذكاء الاصطناعي'));
+      setOptimizeScheduleError(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsOptimizingSchedule(false);
     }
@@ -1368,58 +1506,58 @@ export default function App() {
     const app: PhoneAppShortcut = {
       id: `papp-${Date.now()}`,
       ...newApp,
+      icon: normalizeLegacyPhoneAppIcon({ ...newApp }),
     };
-    let updatedList: PhoneAppList | null = null;
+    const existingList = phoneAppLists.find((l) => l.id === listId);
+    const updatedList = existingList
+      ? { ...existingList, apps: [...existingList.apps, app] }
+      : null;
     setPhoneAppLists((prev) =>
-      prev.map((l) => {
-        if (l.id === listId) {
-          updatedList = { ...l, apps: [...l.apps, app] };
-          return updatedList;
-        }
-        return l;
-      })
+      prev.map((l) => (l.id === listId ? { ...l, apps: [...l.apps, app] } : l))
     );
     soundEngine.playChime(true);
     if (updatedList) {
-      const target = updatedList;
-      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, target, false));
+      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, updatedList, false));
     }
   };
 
   const handleUpdatePhoneAppInList = (listId: string, updatedApp: PhoneAppShortcut) => {
-    let updatedList: PhoneAppList | null = null;
-    setPhoneAppLists((prev) =>
-      prev.map((l) => {
-        if (l.id === listId) {
-          updatedList = {
-            ...l,
-            apps: l.apps.map((a) => (a.id === updatedApp.id ? updatedApp : a)),
-          };
-          return updatedList;
+    const normalizedApp: PhoneAppShortcut = {
+      ...updatedApp,
+      icon: normalizeLegacyPhoneAppIcon(updatedApp),
+    };
+    const existingList = phoneAppLists.find((l) => l.id === listId);
+    const updatedList = existingList
+      ? {
+          ...existingList,
+          apps: existingList.apps.map((a) => (a.id === normalizedApp.id ? normalizedApp : a)),
         }
-        return l;
-      })
+      : null;
+    setPhoneAppLists((prev) =>
+      prev.map((l) =>
+        l.id === listId
+          ? { ...l, apps: l.apps.map((a) => (a.id === normalizedApp.id ? normalizedApp : a)) }
+          : l
+      )
     );
+    soundEngine.playChime(true);
     if (updatedList) {
-      const target = updatedList;
-      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, target, false));
+      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, updatedList, false));
     }
   };
 
   const handleDeletePhoneAppFromList = (listId: string, appId: string) => {
-    let updatedList: PhoneAppList | null = null;
+    const existingList = phoneAppLists.find((l) => l.id === listId);
+    const updatedList = existingList
+      ? { ...existingList, apps: existingList.apps.filter((a) => a.id !== appId) }
+      : null;
     setPhoneAppLists((prev) =>
-      prev.map((l) => {
-        if (l.id === listId) {
-          updatedList = { ...l, apps: l.apps.filter((a) => a.id !== appId) };
-          return updatedList;
-        }
-        return l;
-      })
+      prev.map((l) =>
+        l.id === listId ? { ...l, apps: l.apps.filter((a) => a.id !== appId) } : l
+      )
     );
     if (updatedList) {
-      const target = updatedList;
-      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, target, false));
+      void runCloudMutation((uid) => upsertPhoneAppListDoc(uid, updatedList, false));
     }
   };
 
@@ -1542,15 +1680,24 @@ export default function App() {
 
   // Reminder Actions
   const handleEnablePush = async () => {
-    await requestLocalNotificationPermissions();
+    const localPerm = await requestLocalNotificationPermissions();
     const perm = await requestPushPermission();
-    setPushPermission(perm);
-    if (perm === 'granted') {
+    const effectivePerm: NotificationPermission | 'unsupported' =
+      perm === 'denied' || localPerm === 'denied'
+        ? 'denied'
+        : perm === 'granted' || localPerm === 'granted'
+          ? 'granted'
+          : perm;
+    setPushPermission(effectivePerm);
+    if (effectivePerm === 'granted') {
       setPushEnabled(true);
+      setShowNotificationDeniedBanner(false);
       sendBrowserNotification(
         'تم تفعيل تنبيهات التوأم الرقمي',
         'ستصلك إشعارات فورية للمهام القريبة أو المتأخرة.'
       );
+    } else if (effectivePerm === 'denied') {
+      setShowNotificationDeniedBanner(true);
     }
   };
 
@@ -1653,8 +1800,166 @@ export default function App() {
     );
   };
 
+  // Horizontal swipe gesture navigation between الرئيسية, المهام, and الجدول
+  const swipeStartRef = React.useRef<{
+    x: number;
+    y: number;
+    time: number;
+    lockedAxis: 'horizontal' | 'vertical' | null;
+  } | null>(null);
+  const [swipePreview, setSwipePreview] = useState<{
+    targetLabel: string;
+    side: 'left' | 'right';
+    ready: boolean;
+  } | null>(null);
+
+  const activeSwipeIndex = SWIPEABLE_TABS.findIndex((t) => t.id === currentTab);
+  const isSwipeNavigationEnabled =
+    activeSwipeIndex !== -1 &&
+    !isChatOpen &&
+    !isQuickAddOpen &&
+    !isFocusOpen &&
+    !isBreakdownOpen &&
+    !isBriefingOpen &&
+    !isContextualBriefingOpen;
+
+  const resolveSwipeTarget = (dx: number) => {
+    if (activeSwipeIndex === -1) return null;
+    const isRtl =
+      typeof document === 'undefined' || document.documentElement.dir !== 'ltr';
+    const step = isRtl ? (dx > 0 ? 1 : -1) : dx < 0 ? 1 : -1;
+    const nextIndex = activeSwipeIndex + step;
+    if (nextIndex < 0 || nextIndex >= SWIPEABLE_TABS.length) return null;
+    return SWIPEABLE_TABS[nextIndex];
+  };
+
+  const handleMainTouchStart = (e: React.TouchEvent<HTMLElement>) => {
+    if (!isSwipeNavigationEnabled || e.touches.length !== 1) return;
+    if (shouldIgnoreSwipeTarget(e.target, e.currentTarget)) return;
+    const touch = e.touches[0];
+    swipeStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+      lockedAxis: null,
+    };
+  };
+
+  const handleMainTouchMove = (e: React.TouchEvent<HTMLElement>) => {
+    const start = swipeStartRef.current;
+    if (!start || e.touches.length !== 1 || !isSwipeNavigationEnabled) return;
+
+    const dx = e.touches[0].clientX - start.x;
+    const dy = e.touches[0].clientY - start.y;
+
+    if (!start.lockedAxis) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) {
+        start.lockedAxis = 'vertical';
+        setSwipePreview(null);
+        return;
+      }
+      if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        start.lockedAxis = 'horizontal';
+      } else {
+        return;
+      }
+    }
+
+    if (start.lockedAxis !== 'horizontal') return;
+
+    const target = resolveSwipeTarget(dx);
+    if (!target) {
+      setSwipePreview(null);
+      return;
+    }
+
+    setSwipePreview({
+      targetLabel: target.label,
+      side: dx > 0 ? 'right' : 'left',
+      ready: Math.abs(dx) >= 60,
+    });
+  };
+
+  const handleMainTouchEnd = (e: React.TouchEvent<HTMLElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    setSwipePreview(null);
+
+    if (
+      !start ||
+      start.lockedAxis !== 'horizontal' ||
+      !isSwipeNavigationEnabled
+    ) {
+      return;
+    }
+
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+
+    if (
+      Math.abs(dx) >= 60 &&
+      Math.abs(dx) > Math.abs(dy) * 1.2 &&
+      (elapsed < 850 || Math.abs(dx) >= 95)
+    ) {
+      const target = resolveSwipeTarget(dx);
+      if (target) {
+        handleNavigateTab(target.id);
+        if (typeof window !== 'undefined') {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+    }
+  };
+
+  const handleMainTouchCancel = () => {
+    swipeStartRef.current = null;
+    setSwipePreview(null);
+  };
+
+  if (!authReady) {
+    return (
+      <div
+        dir="rtl"
+        className="min-h-screen bg-[#0a0e17] text-slate-100 flex flex-col items-center justify-center p-6 gap-4"
+      >
+        <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-cyan-500/40 flex items-center justify-center shadow-lg shadow-cyan-500/10">
+          <Bot className="w-7 h-7 text-cyan-400 animate-pulse" />
+        </div>
+        <p className="text-sm font-bold text-slate-300">جاري التحقق من جلسة الحساب...</p>
+      </div>
+    );
+  }
+
+  if (!authUser || !auth.currentUser || !authUser.emailVerified) {
+    return (
+      <AuthScreen
+        unverifiedUser={authUser && !authUser.emailVerified ? authUser : null}
+        onAuthSuccess={(user) => {
+          setAuthUser(user);
+          setAuthError(null);
+        }}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  if (!hasCompletedOnboarding) {
+    return (
+      <OnboardingScreen
+        initialName={
+          authUser.displayName || (profile.name !== defaultProfile.name ? profile.name : '')
+        }
+        onComplete={handleCompleteOnboarding}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#0a0e17] text-slate-100 flex flex-col selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-screen bg-[#0a0e17] text-slate-100 flex flex-col overflow-x-hidden selection:bg-cyan-500/30 selection:text-cyan-200">
       
       {/* Top Navbar */}
       <Navbar
@@ -1698,15 +2003,69 @@ export default function App() {
         authUser={authUser}
         authLoading={authLoading}
         cloudSyncStatus={cloudSyncStatus}
-        onSignIn={() => handleSignIn(profile.name, undefined, false)}
+        onSignIn={handleSignIn}
         onOpenCloudSettings={() => openProfileModal('cloud')}
         onReviewTomorrowSchedule={handleReviewTomorrowSchedule}
         onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
         onCheckTomorrowEnergy={() => handleTriggerTomorrowEnergyCheck()}
       />
 
-      {/* Main View Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-24 md:pb-8">
+      {/* Main View Container (supports horizontal swipe across all main views) */}
+      <main
+        onTouchStart={handleMainTouchStart}
+        onTouchMove={handleMainTouchMove}
+        onTouchEnd={handleMainTouchEnd}
+        onTouchCancel={handleMainTouchCancel}
+        className={`relative flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-24 md:pb-8 touch-pan-y transition-transform duration-150 ${
+          swipePreview
+            ? swipePreview.side === 'right'
+              ? 'translate-x-3'
+              : '-translate-x-3'
+            : ''
+        }`}
+      >
+        {/* Floating Swipe Direction Preview Pill */}
+        {swipePreview && (
+          <div
+            aria-live="polite"
+            className={`fixed top-20 z-40 px-3.5 py-2 rounded-2xl border shadow-2xl backdrop-blur-md text-xs font-bold flex items-center gap-1.5 transition-all pointer-events-none ${
+              swipePreview.side === 'right' ? 'right-4' : 'left-4'
+            } ${
+              swipePreview.ready
+                ? 'bg-emerald-600/95 border-emerald-300 text-white scale-105'
+                : 'bg-slate-900/90 border-cyan-500/50 text-cyan-200'
+            }`}
+          >
+            {swipePreview.side === 'right' ? (
+              <ChevronRight className="w-4 h-4 shrink-0" />
+            ) : (
+              <ChevronLeft className="w-4 h-4 shrink-0" />
+            )}
+            <span>الانتقال إلى: {swipePreview.targetLabel}</span>
+          </div>
+        )}
+
+        {showNotificationDeniedBanner && (
+          <div
+            role="alert"
+            className="mb-4 rounded-2xl border border-amber-500/40 bg-amber-950/50 px-4 py-3 text-xs text-amber-100 flex items-center justify-between gap-3 shadow-lg animate-fadeIn"
+          >
+            <div className="flex items-start gap-2.5">
+              <BellOff className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <span className="leading-relaxed font-medium">
+                {NOTIFICATION_DENIED_ALERT_MESSAGE}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowNotificationDeniedBanner(false)}
+              className="p-1.5 rounded-lg text-amber-300 hover:bg-amber-900/50 shrink-0 cursor-pointer"
+              title="إغلاق التنبيه"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         {currentTab === 'dashboard' && (
           <DashboardView
             profile={profile}
@@ -1798,6 +2157,8 @@ export default function App() {
             optimizationResult={optimizationResult}
             initialSelectedDate={scheduleFocusDate}
             onOpenProfileSettings={() => openProfileModal('profile')}
+            optimizeError={optimizeScheduleError}
+            onClearOptimizeError={() => setOptimizeScheduleError(null)}
           />
         )}
 
@@ -1840,39 +2201,89 @@ export default function App() {
         )}
 
         {currentTab === 'focus' && (
-          <div className="py-10 text-center space-y-4">
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={() => openFocusModal(tasks.find((t) => t.status !== 'completed'))}
-                className="px-8 py-4 rounded-3xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black text-lg shadow-xl shadow-amber-500/20 hover:scale-105 transition-transform cursor-pointer"
-              >
-                🔥 دخول غرفة التركيز العميق الآن
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  closeAllModals();
-                  setCurrentTab('dashboard');
-                }}
-                className="px-6 py-4 rounded-3xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-sm transition-all cursor-pointer"
-              >
-                الرجوع للواجهة الأساسية
-              </button>
-            </div>
-          </div>
+          <FocusModeModal
+            embedded
+            isOpen
+            onClose={() => handleNavigateTab('dashboard')}
+            onReturnToDashboard={() => handleNavigateTab('dashboard')}
+            initialTask={focusTask}
+            tasks={tasks}
+            profile={profile}
+            onUpdateProfile={(newProf) => {
+              setProfile(newProf);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: newProf }));
+            }}
+            onToggleSubtask={handleToggleSubtask}
+            onCompleteTask={(taskId) => {
+              handleToggleTask(taskId);
+            }}
+            autoDndEnabled={autoDndEnabled}
+            onToggleAutoDnd={() => setAutoDndEnabled((v) => !v)}
+            isDndActive={isDndActive}
+            onFocusRunningChange={setIsFocusSessionRunning}
+          />
+        )}
+
+        {currentTab === 'settings' && (
+          <TwinProfileModal
+            embedded
+            isOpen
+            onClose={() => handleNavigateTab('dashboard')}
+            profile={profile}
+            onSaveProfile={(newProf) => {
+              setProfile(newProf);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: newProf }));
+            }}
+            onExportData={handleExportData}
+            onImportData={handleImportData}
+            onResetData={handleResetData}
+            customWidgets={customWidgets}
+            dashboardLayout={dashboardLayout}
+            onAddCustomWidget={handleAddCustomWidget}
+            onUpdateCustomWidget={handleUpdateCustomWidget}
+            onDeleteCustomWidget={handleDeleteCustomWidget}
+            onToggleWidgetVisibility={handleToggleWidgetVisibility}
+            initialTab={profileInitialTab}
+            authUser={authUser}
+            authLoading={authLoading}
+            cloudSyncStatus={cloudSyncStatus}
+            lastSyncedAt={lastSyncedAt}
+            authError={authError}
+            onSignIn={handleSignIn}
+            onSignOut={handleSignOut}
+            onPushLocalToCloud={handlePushLocalToCloud}
+            tasks={tasks}
+            schedule={schedule}
+            onTriggerTomorrowEnergyCheck={handleTriggerTomorrowEnergyCheck}
+            onApplyCalendarSync={handleApplyGoogleCalendarSync}
+            soundEnabled={soundEnabled}
+            onToggleSound={() => {
+              const next = !soundEnabled;
+              setSoundEnabled(next);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { soundEnabled: next }));
+            }}
+            comfortReadingEnabled={Boolean(profile.comfortReadingMode)}
+            onToggleComfortReading={() => {
+              const nextProfile: DigitalTwinProfile = {
+                ...profile,
+                comfortReadingMode: !profile.comfortReadingMode,
+              };
+              setProfile(nextProfile);
+              void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: nextProfile }));
+            }}
+          />
         )}
       </main>
 
-      {/* Focus Mode Overlay */}
+      {/* Ad-hoc Focus Mode Overlay (when launched from a specific task while on another tab) */}
       <FocusModeModal
-        isOpen={isFocusOpen || currentTab === 'focus'}
+        isOpen={isFocusOpen && currentTab !== 'focus'}
         onClose={() => {
           setIsFocusOpen(false);
-          if (currentTab === 'focus') setCurrentTab('dashboard');
         }}
         onReturnToDashboard={() => {
           closeAllModals();
-          setCurrentTab('dashboard');
+          handleNavigateTab('dashboard');
         }}
         initialTask={focusTask}
         tasks={tasks}
@@ -1928,54 +2339,6 @@ export default function App() {
         onApplySubtasks={handleApplySubtasks}
       />
 
-      {/* Twin Persona / App Settings & Custom Widgets Modal */}
-      <TwinProfileModal
-        isOpen={isProfileOpen}
-        onClose={() => setIsProfileOpen(false)}
-        profile={profile}
-        onSaveProfile={(newProf) => {
-          setProfile(newProf);
-          void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: newProf }));
-        }}
-        onExportData={handleExportData}
-        onImportData={handleImportData}
-        onResetData={handleResetData}
-        customWidgets={customWidgets}
-        dashboardLayout={dashboardLayout}
-        onAddCustomWidget={handleAddCustomWidget}
-        onUpdateCustomWidget={handleUpdateCustomWidget}
-        onDeleteCustomWidget={handleDeleteCustomWidget}
-        onToggleWidgetVisibility={handleToggleWidgetVisibility}
-        initialTab={profileInitialTab}
-        authUser={authUser}
-        authLoading={authLoading}
-        cloudSyncStatus={cloudSyncStatus}
-        lastSyncedAt={lastSyncedAt}
-        authError={authError}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-        onPushLocalToCloud={handlePushLocalToCloud}
-        tasks={tasks}
-        schedule={schedule}
-        onTriggerTomorrowEnergyCheck={handleTriggerTomorrowEnergyCheck}
-        onApplyCalendarSync={handleApplyGoogleCalendarSync}
-        soundEnabled={soundEnabled}
-        onToggleSound={() => {
-          const next = !soundEnabled;
-          setSoundEnabled(next);
-          void runCloudMutation((uid) => syncWorkspaceFields(uid, { soundEnabled: next }));
-        }}
-        comfortReadingEnabled={Boolean(profile.comfortReadingMode)}
-        onToggleComfortReading={() => {
-          const nextProfile: DigitalTwinProfile = {
-            ...profile,
-            comfortReadingMode: !profile.comfortReadingMode,
-          };
-          setProfile(nextProfile);
-          void runCloudMutation((uid) => syncWorkspaceFields(uid, { profile: nextProfile }));
-        }}
-      />
-
       {/* Morning Kickoff & Evening Debrief Modal */}
       <DailyBriefingModal
         isOpen={isBriefingOpen}
@@ -2024,7 +2387,7 @@ export default function App() {
           type="button"
           id="fab-ai-assistant"
           onClick={() => openChatModal(undefined)}
-          className="fixed bottom-24 left-4 md:bottom-6 md:left-6 z-30 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-emerald-600 hover:from-cyan-500 hover:via-indigo-500 hover:to-emerald-500 text-white font-bold text-xs shadow-xl shadow-cyan-500/25 border border-cyan-300/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          className="fixed bottom-20 left-4 md:bottom-6 md:left-6 z-30 flex items-center gap-2 px-4 py-3 rounded-2xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-emerald-600 hover:from-cyan-500 hover:via-indigo-500 hover:to-emerald-500 text-white font-bold text-xs shadow-xl shadow-cyan-500/25 border border-cyan-300/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
           title="التحدث مع المساعد الرقمي AI"
         >
           <span className="relative flex items-center justify-center">

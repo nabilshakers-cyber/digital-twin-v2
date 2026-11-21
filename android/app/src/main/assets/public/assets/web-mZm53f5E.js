@@ -1,0 +1,1 @@
+import{W as r}from"./index-DuHaQzQg.js";import"./charts-BJppLlJs.js";import"./firebase-CrHunPRO.js";class a extends r{async canOpenUrl(e){return{value:!0}}async openUrl(e){return window.open(e.url,"_blank"),{completed:!0}}}export{a as AppLauncherWeb};

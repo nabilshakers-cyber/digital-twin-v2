@@ -33,6 +33,15 @@ export interface ScheduleReminderObjectParams extends ScheduleReminderOptions {
 const STORAGE_KEY = 'digital_twin_scheduled_reminders_v1';
 const REMINDER_CHANNEL_ID = 'digital_twin_reminders';
 const REMINDERS_UPDATED_EVENT = 'digital-twin:reminders-updated';
+export const NOTIFICATION_DENIED_EVENT = 'digital-twin:notification-permission-denied';
+export const NOTIFICATION_DENIED_ALERT_MESSAGE =
+  'لن تتمكن من استلام التذكيرات. يرجى تفعيل الإشعارات من إعدادات الهاتف.';
+
+function notifyPermissionDenied(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_DENIED_EVENT));
+  }
+}
 
 const webFallbackTimers = new Map<number, number>();
 let channelInitialized = false;
@@ -192,12 +201,20 @@ export async function requestLocalNotificationPermissions(): Promise<
       if (current.display === 'granted') {
         return 'granted';
       }
+      if (current.display === 'denied') {
+        notifyPermissionDenied();
+        return 'denied';
+      }
       const requested = await LocalNotifications.requestPermissions();
       if (requested.display === 'granted') return 'granted';
-      if (requested.display === 'denied') return 'denied';
+      if (requested.display === 'denied') {
+        notifyPermissionDenied();
+        return 'denied';
+      }
       return 'prompt';
     } catch (err) {
       console.warn('LocalNotifications.requestPermissions failed:', err);
+      notifyPermissionDenied();
       return 'denied';
     }
   }
@@ -205,10 +222,19 @@ export async function requestLocalNotificationPermissions(): Promise<
   if (typeof window !== 'undefined' && 'Notification' in window) {
     try {
       if (Notification.permission === 'granted') return 'granted';
-      if (Notification.permission === 'denied') return 'denied';
+      if (Notification.permission === 'denied') {
+        notifyPermissionDenied();
+        return 'denied';
+      }
       const perm = await Notification.requestPermission();
-      return perm === 'granted' ? 'granted' : perm === 'denied' ? 'denied' : 'prompt';
+      if (perm === 'granted') return 'granted';
+      if (perm === 'denied') {
+        notifyPermissionDenied();
+        return 'denied';
+      }
+      return 'prompt';
     } catch {
+      notifyPermissionDenied();
       return 'denied';
     }
   }
@@ -220,8 +246,10 @@ export async function requestLocalNotificationPermissions(): Promise<
  * Initialize local notifications on app startup: requests permissions, creates Android channel,
  * restores web fallback timers if needed, and syncs delivered one-shot reminders.
  */
-export async function initializeLocalNotifications(): Promise<void> {
-  await requestLocalNotificationPermissions();
+export async function initializeLocalNotifications(): Promise<
+  'granted' | 'denied' | 'prompt'
+> {
+  const permissionStatus = await requestLocalNotificationPermissions();
 
   const stored = readStoredReminders();
   const now = Date.now();
@@ -280,6 +308,8 @@ export async function initializeLocalNotifications(): Promise<void> {
       // ignore listener registration failures
     }
   }
+
+  return permissionStatus;
 }
 
 /**
@@ -386,11 +416,18 @@ export async function scheduleReminder(
     });
   } else {
     // Request browser notification permission gently if in prompt state
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      try {
-        await Notification.requestPermission();
-      } catch {
-        // ignore
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'denied') {
+        notifyPermissionDenied();
+      } else if (Notification.permission === 'default') {
+        try {
+          const perm = await Notification.requestPermission();
+          if (perm === 'denied') {
+            notifyPermissionDenied();
+          }
+        } catch {
+          // ignore
+        }
       }
     }
     registerWebFallbackTimer(scheduledRecord);

@@ -10,10 +10,12 @@ import {
   VolumeX, 
   CheckCircle2, 
   Flame, 
-  Quote
+  Quote,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { DailyBriefing, DigitalTwinProfile, Task, TimeBlock } from '../types';
-import { generateBriefingWithAI } from '../utils/api';
+import { FRIENDLY_AI_CONNECTION_ERROR, generateBriefingWithAI } from '../utils/api';
 import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface DailyBriefingModalProps {
@@ -35,12 +37,14 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
 }) => {
   const [briefing, setBriefing] = useState<DailyBriefing | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       fetchBriefing();
     } else {
+      setErrorMsg(null);
       if (isSpeaking) {
         window.speechSynthesis?.cancel();
         setIsSpeaking(false);
@@ -50,6 +54,7 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
 
   const fetchBriefing = async () => {
     setIsLoading(true);
+    setErrorMsg(null);
     try {
       const completed = tasks.filter((t) => t.status === 'completed');
       const data = await generateBriefingWithAI({
@@ -61,7 +66,8 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
       });
       setBriefing(data);
     } catch (e) {
-      console.error(e);
+      console.error('[DailyBriefingModal] generateBriefingWithAI failed:', e);
+      setErrorMsg(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsLoading(false);
     }
@@ -133,11 +139,29 @@ export const DailyBriefingModal: React.FC<DailyBriefingModalProps> = ({
         <div className="app-modal-body p-4 sm:p-6 space-y-4">
           {/* Loading */}
           {isLoading && (
-            <div className="py-14 text-center space-y-3">
+            <div className="py-14 text-center space-y-3" role="status" aria-live="polite">
               <Loader2 className="w-8 h-8 animate-spin text-cyan-400 mx-auto" />
-              <p className="text-xs text-slate-300 font-semibold">
-                نسختك الرقمية تجمع بيانات اليوم وتصيغ لك التوجيه...
+              <p className="text-xs text-cyan-300 font-semibold animate-pulse">
+                جاري التفكير...
               </p>
+            </div>
+          )}
+
+          {/* Friendly Connection Error */}
+          {!isLoading && errorMsg && (
+            <div className="p-4 rounded-2xl bg-rose-950/50 border border-rose-700/60 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-3">
+              <span className="flex items-center gap-2 font-medium">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{errorMsg}</span>
+              </span>
+              <button
+                type="button"
+                onClick={fetchBriefing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold cursor-pointer shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>إعادة المحاولة</span>
+              </button>
             </div>
           )}
 

@@ -103,6 +103,19 @@ function sanitizeProfile(p: DigitalTwinProfile): DigitalTwinProfile {
   if (p.comfortReadingMode !== undefined) {
     sanitized.comfortReadingMode = Boolean(p.comfortReadingMode);
   }
+  if (p.preferredTimePeriod === 'morning' || p.preferredTimePeriod === 'evening') {
+    sanitized.preferredTimePeriod = p.preferredTimePeriod;
+  }
+  if (Array.isArray(p.focusAreas)) {
+    const validAreas = new Set(['work', 'worship', 'health']);
+    const cleanedAreas = Array.from(
+      new Set(p.focusAreas.filter((area): area is 'work' | 'worship' | 'health' => validAreas.has(area)))
+    ).slice(0, 3);
+    sanitized.focusAreas = cleanedAreas;
+  }
+  if (p.onboardingCompleted !== undefined) {
+    sanitized.onboardingCompleted = Boolean(p.onboardingCompleted);
+  }
   return sanitized;
 }
 

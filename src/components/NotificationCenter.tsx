@@ -22,6 +22,7 @@ import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
 import { Task } from '../types';
 import { broadcastCloseAllModals, useModalCloseListener } from '../utils/modalCoordinator';
+import { NOTIFICATION_DENIED_ALERT_MESSAGE } from '../utils/localNotifications';
 
 interface NotificationCenterProps {
   reminders: SmartReminder[];
@@ -259,7 +260,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 {pushPermission === 'unsupported'
                   ? 'التنبيهات المرئية الذكية مفعلة'
                   : pushPermission === 'denied'
-                  ? 'إشعارات المتصفح محظورة (التنبيهات المرئية نشطة)'
+                  ? NOTIFICATION_DENIED_ALERT_MESSAGE
                   : pushPermission === 'granted'
                   ? pushEnabled
                     ? 'إشعارات الدفع (Push) مفعلة'

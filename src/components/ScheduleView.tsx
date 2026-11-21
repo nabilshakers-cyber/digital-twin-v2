@@ -25,6 +25,8 @@ import {
   ChevronLeft,
   ChevronRight,
   BatteryCharging,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 import { TimeBlock, DigitalTwinProfile, Task } from '../types';
 import {
@@ -61,6 +63,8 @@ interface ScheduleViewProps {
   } | null;
   initialSelectedDate?: string;
   onOpenProfileSettings?: () => void;
+  optimizeError?: string | null;
+  onClearOptimizeError?: () => void;
 }
 
 export const ScheduleView: React.FC<ScheduleViewProps> = ({
@@ -79,6 +83,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   optimizationResult,
   initialSelectedDate,
   onOpenProfileSettings,
+  optimizeError,
+  onClearOptimizeError,
 }) => {
   const todayIso = toLocalIsoDate(new Date());
   const [selectedDateIso, setSelectedDateIso] = useState<string>(initialSelectedDate || todayIso);
@@ -101,6 +107,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [category, setCategory] = useState<TimeBlock['category']>('deep_work');
   const [priority, setPriority] = useState<TimeBlock['priority']>('medium');
   const [isFixed, setIsFixed] = useState(false);
+  const [titleError, setTitleError] = useState<string | null>(null);
 
   const selectedDateInfo = getDualDateInfo(selectedDateIso);
   const stripDays = getCalendarStripDays(stripAnchorIso, 1, 7);
@@ -123,6 +130,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     setEditingBlockId(null);
     setTitle('');
     setDescription('');
+    setTitleError(null);
     setBlockDate(selectedDateIso);
     setStartTime('09:00');
     setEndTime('10:00');
@@ -136,6 +144,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     setEditingBlockId(block.id);
     setTitle(block.title);
     setDescription(block.description || '');
+    setTitleError(null);
     setBlockDate(block.date || selectedDateIso);
     setStartTime(block.startTime);
     setEndTime(block.endTime);
@@ -150,11 +159,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     setEditingBlockId(null);
     setTitle('');
     setDescription('');
+    setTitleError(null);
   };
 
   const handleSaveBlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim()) {
+      setTitleError('يرجى كتابة عنوان المهمة أولاً.');
+      return;
+    }
+    setTitleError(null);
 
     if (editingBlockId && onUpdateScheduleBlock) {
       const existing = schedule.find((b) => b.id === editingBlockId);
@@ -273,7 +287,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             {isOptimizing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>جاري بناء الجدول الأمثل...</span>
+                <span className="animate-pulse">جاري التفكير...</span>
               </>
             ) : (
               <>
@@ -661,6 +675,37 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         );
       })()}
 
+      {/* Friendly AI Schedule Error Banner with Retry */}
+      {optimizeError && (
+        <div className="bg-rose-950/60 border border-rose-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-100 animate-fadeIn">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <span className="leading-relaxed font-medium">{optimizeError}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <button
+              type="button"
+              onClick={() => void onOptimizeSchedule()}
+              disabled={isOptimizing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold cursor-pointer disabled:opacity-50"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>إعادة المحاولة</span>
+            </button>
+            {onClearOptimizeError && (
+              <button
+                type="button"
+                onClick={onClearOptimizeError}
+                className="p-1.5 rounded-lg text-rose-300 hover:bg-rose-900/60 cursor-pointer"
+                title="إغلاق"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* AI Strategy & Rationale banner if recently generated */}
       {optimizationResult && (
         <div className="bg-gradient-to-br from-cyan-950/40 via-slate-900 to-slate-900 rounded-2xl border border-cyan-800/60 p-4 space-y-3 animate-fadeIn">
@@ -695,6 +740,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       {isFormOpen && (
         <form
           onSubmit={handleSaveBlock}
+          noValidate
           className="bg-slate-900 rounded-2xl border border-cyan-800/60 p-5 space-y-4 shadow-xl animate-fadeIn"
         >
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -725,12 +771,22 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               <label className="text-xs font-semibold text-slate-300">عنوان البلوك الزمني *</label>
               <input
                 type="text"
-                required
                 placeholder="مثال: جلسة برمجة وتركيز عميق / اجتماع العميل"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  if (titleError && e.target.value.trim()) setTitleError(null);
+                }}
+                className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none ${
+                  titleError ? 'border-rose-500 focus:border-rose-400' : 'border-slate-800 focus:border-cyan-500'
+                }`}
               />
+              {titleError && (
+                <p className="text-[11px] font-semibold text-rose-400 flex items-center gap-1 mt-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{titleError}</span>
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5 md:col-span-2">

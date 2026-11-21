@@ -83,6 +83,7 @@ interface TwinProfileModalProps {
   onToggleSound?: () => void;
   comfortReadingEnabled?: boolean;
   onToggleComfortReading?: () => void;
+  embedded?: boolean;
 }
 
 const ICONS = ['🧩', '📝', '✅', '📊', '🔥', '📚', '🌿', '⚡', '🕌', '💼', '🎯', '💡'];
@@ -125,6 +126,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
   onToggleSound,
   comfortReadingEnabled = false,
   onToggleComfortReading,
+  embedded = false,
 }) => {
   const [settingsTab, setSettingsTab] = useState<'profile' | 'widgets' | 'cloud' | 'android'>(
     initialTab
@@ -193,7 +195,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
     setEndOfDayAlertTime(profile.endOfDayAlertTime || '20:00');
   }, [isOpen, profile, initialTab]);
 
-  useModalScrollLock('profile-modal', isOpen);
+  useModalScrollLock('profile-modal', isOpen && !embedded);
 
   if (!isOpen) return null;
 
@@ -322,17 +324,14 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
     return entry ? entry.visible : true;
   };
 
-  return (
-    <div
-      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
-      onClick={onClose}
-    >
-      <div
-        className="app-modal-panel max-w-3xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+  const panelInner = (
+    <>
         {/* Sticky Header with Always-Visible Close (X) */}
-        <div className="app-modal-header p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div
+          className={`${
+            embedded ? '' : 'app-modal-header '
+          }p-4 sm:p-5 border-b border-slate-800 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3`}
+        >
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20 shrink-0">
               <Settings className="w-5 h-5 text-cyan-200" />
@@ -424,7 +423,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="app-modal-body p-4 sm:p-6 space-y-5">
+        <div className={embedded ? 'p-4 sm:p-6 space-y-5' : 'app-modal-body p-4 sm:p-6 space-y-5'}>
 
         {/* TAB 1: Digital Twin Profile & Data Backup */}
         {settingsTab === 'profile' && (
@@ -1245,7 +1244,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                           {authUser.displayName || 'مستخدم مسجل'}
                         </h4>
                         <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                          {authUser.mode === 'firebase' ? 'متصل بـ Firestore' : 'حساب محلي داخل التطبيق'}
+                          متصل بسحابة Firestore
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{authUser.email}</p>
@@ -1260,7 +1259,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                       className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-200 hover:text-rose-200 border border-slate-700 text-xs font-bold cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5" />
-                      <span>تسجيل الخروج والعودة للرئيسية</span>
+                      <span>تسجيل الخروج</span>
                     </button>
                   )}
                 </div>
@@ -1268,9 +1267,7 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                 <div className="p-4 rounded-2xl bg-slate-950/75 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-slate-200 flex items-center gap-2">
-                      {authUser.mode === 'local' ? (
-                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      ) : cloudSyncStatus === 'syncing' ? (
+                      {cloudSyncStatus === 'syncing' ? (
                         <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
                       ) : cloudSyncStatus === 'error' ? (
                         <CloudOff className="w-4 h-4 text-rose-400" />
@@ -1278,25 +1275,23 @@ export const TwinProfileModal: React.FC<TwinProfileModalProps> = ({
                         <Cloud className="w-4 h-4 text-emerald-400" />
                       )}
                       <span>
-                        {authUser.mode === 'local'
-                          ? 'الحالة: مسجّل محلياً بأمان داخل التطبيق (بدون روابط خارجية)'
-                          : cloudSyncStatus === 'syncing'
-                          ? 'حالة المزامنة: جارٍ المزامنة...'
+                        {cloudSyncStatus === 'syncing'
+                          ? 'حالة المزامنة: جارٍ المزامنة مع السحابة...'
                           : cloudSyncStatus === 'error'
                           ? 'حالة المزامنة: يوجد خطأ في المزامنة'
-                          : 'حالة المزامنة: محدّثة ومتزامنة مع السحابة'}
+                          : 'حالة المزامنة: محدّثة ومتزامنة مع Firestore'}
                       </span>
                     </span>
-                    {lastSyncedAt && authUser.mode === 'firebase' && (
+                    {lastSyncedAt && (
                       <span className="text-[11px] text-slate-400">آخر تحديث: {lastSyncedAt}</span>
                     )}
                   </div>
 
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    جميع مهامك، جدول الأعمال والتقويم الهجري والميلادي، إعدادات التوأم الرقمي، الأهداف، ورد القرآن والأذكار، المكونات المخصصة، وقوائم تطبيقات الهاتف محفوظة محلياً فوراً على جهازك.
+                    جميع مهامك (users/{'{userId}'}/tasks) وأهدافك (users/{'{userId}'}/goals) وجدول أعمالك وإعدادات التوأم الرقمي محفوظة ومحمية في سحابة Firestore لحسابك فقط.
                   </p>
 
-                  {onPushLocalToCloud && authUser.mode === 'firebase' && (
+                  {onPushLocalToCloud && (
                     <div className="pt-1">
                       <button
                         type="button"
@@ -1470,6 +1465,27 @@ npx cap open android`}
           </div>
         )}
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="max-w-4xl mx-auto bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden animate-fadeIn">
+        {panelInner}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="app-modal-overlay bg-slate-950/85 backdrop-blur-md sm:p-4 animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="app-modal-panel max-w-3xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {panelInner}
       </div>
     </div>
   );

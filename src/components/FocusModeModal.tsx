@@ -48,6 +48,7 @@ interface FocusModeModalProps {
   onToggleAutoDnd: () => void;
   isDndActive: boolean;
   onFocusRunningChange: (isRunning: boolean) => void;
+  embedded?: boolean;
 }
 
 const FOCUS_DURATION_PRESETS = [
@@ -78,6 +79,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
   onToggleAutoDnd,
   isDndActive,
   onFocusRunningChange,
+  embedded = false,
 }) => {
   const savedFocusMinutes = useMemo(
     () => clampFocusMinutes(profile.focusSessionMinutes ?? 25),
@@ -283,22 +285,18 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
     return twinFocusQuotes[Math.floor(Math.random() * twinFocusQuotes.length)];
   }, [isOpen, profile.name, savedFocusMinutes]);
 
-  useModalScrollLock('focus-modal', isOpen);
+  useModalScrollLock('focus-modal', isOpen && !embedded);
 
   if (!isOpen) return null;
 
-  return (
-    <div
-      className="app-modal-overlay bg-slate-950/95 backdrop-blur-xl sm:p-4 animate-fadeIn"
-      onClick={handleClose}
-    >
-      <div
-        className="app-modal-panel max-w-2xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        
+  const panelInner = (
+    <>
         {/* Sticky Top Action Bar: Return to Dashboard & Close (X) */}
-        <div className="app-modal-header px-4 sm:px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3">
+        <div
+          className={`${
+            embedded ? '' : 'app-modal-header '
+          }px-4 sm:px-6 py-3.5 border-b border-slate-800/80 bg-slate-900/95 backdrop-blur-md flex items-center justify-between gap-3`}
+        >
           <button
             type="button"
             id="btn-focus-return-dashboard"
@@ -323,7 +321,7 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="app-modal-body p-4 sm:p-6">
+        <div className={embedded ? 'p-4 sm:p-6' : 'app-modal-body p-4 sm:p-6'}>
 
         {/* Header with Twin presence */}
         <div className="text-center space-y-2">
@@ -742,6 +740,27 @@ export const FocusModeModal: React.FC<FocusModeModalProps> = ({
         </div>
 
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="max-w-3xl mx-auto bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden animate-fadeIn">
+        {panelInner}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="app-modal-overlay bg-slate-950/95 backdrop-blur-xl sm:p-4 animate-fadeIn"
+      onClick={handleClose}
+    >
+      <div
+        className="app-modal-panel max-w-2xl bg-gradient-to-b from-slate-900 via-[#0a0f1d] to-slate-950 border border-slate-800 rounded-3xl shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {panelInner}
       </div>
     </div>
   );

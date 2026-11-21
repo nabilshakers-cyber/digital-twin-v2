@@ -12,11 +12,13 @@ import {
   Wand2,
   Volume2,
   Zap,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Task, TimeBlock } from '../types';
 import { useWebSpeech } from '../hooks/useWebSpeech';
-import { parseQuickEntryWithAI } from '../utils/api';
+import { FRIENDLY_AI_CONNECTION_ERROR, parseQuickEntryWithAI } from '../utils/api';
 import { soundEngine } from '../utils/audioSynth';
 
 interface VoiceCommandPanelProps {
@@ -34,6 +36,7 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
   const [autoAddOnVoice, setAutoAddOnVoice] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [canRetryParse, setCanRetryParse] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [extractedResult, setExtractedResult] = useState<{
     extractedTasks: Partial<Task>[];
@@ -43,10 +46,15 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
 
   const runVoiceExtraction = async (textToParse: string, autoConfirm: boolean) => {
     const clean = textToParse.trim();
-    if (!clean) return;
+    if (!clean) {
+      setCanRetryParse(false);
+      setParseError('يرجى كتابة عنوان المهمة أولاً.');
+      return;
+    }
 
     setIsParsing(true);
     setParseError(null);
+    setCanRetryParse(false);
     setSuccessMessage(null);
 
     try {
@@ -81,7 +89,9 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
         setExtractedResult(result);
       }
     } catch (err: any) {
-      setParseError(err?.message || 'تعذر تحليل الأمر الصوتي حالياً.');
+      console.error('[VoiceCommandPanel] parseQuickEntryWithAI failed:', err);
+      setCanRetryParse(true);
+      setParseError(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsParsing(false);
     }
@@ -251,7 +261,13 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
             type="text"
             id="input-voice-command-transcript"
             value={displayValue}
-            onChange={(e) => setCommandText(e.target.value)}
+            onChange={(e) => {
+              setCommandText(e.target.value);
+              if (parseError && e.target.value.trim()) {
+                setParseError(null);
+                setCanRetryParse(false);
+              }
+            }}
             readOnly={isListening}
             placeholder={
               isListening
@@ -271,6 +287,7 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
                 setCommandText('');
                 setExtractedResult(null);
                 setParseError(null);
+                setCanRetryParse(false);
                 resetSpeech();
               }}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 cursor-pointer"
@@ -281,24 +298,26 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
           )}
         </div>
 
-        <button
-          type="submit"
-          id="btn-parse-voice-command"
-          disabled={!commandText.trim() || isListening || isParsing}
-          className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-bold shadow-md shadow-cyan-600/20 transition-all cursor-pointer shrink-0"
-        >
-          {isParsing ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>جاري التحليل...</span>
-            </>
-          ) : (
-            <>
-              <Wand2 className="w-3.5 h-3.5" />
-              <span>استخراج وإضافة</span>
-            </>
-          )}
-        </button>
+        {isParsing ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-cyan-950/70 border border-cyan-700/60 text-cyan-300 text-xs font-bold shrink-0"
+          >
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span className="animate-pulse">جاري التفكير...</span>
+          </div>
+        ) : (
+          <button
+            type="submit"
+            id="btn-parse-voice-command"
+            disabled={isListening}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-bold shadow-md shadow-cyan-600/20 transition-all cursor-pointer shrink-0"
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            <span>استخراج وإضافة</span>
+          </button>
+        )}
       </form>
 
       {/* Quick Sample Chips */}
@@ -323,18 +342,35 @@ export const VoiceCommandPanel: React.FC<VoiceCommandPanelProps> = ({ onAddExtra
 
       {/* Speech or Parse Error */}
       {(speechError || parseError) && (
-        <div className="px-3 py-2 rounded-xl bg-rose-950/60 border border-rose-800/60 text-xs text-rose-200 flex items-center justify-between gap-2">
-          <span>{speechError || parseError}</span>
-          <button
-            type="button"
-            onClick={() => {
-              setSpeechError(null);
-              setParseError(null);
-            }}
-            className="text-rose-300 hover:text-white cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+        <div className="px-3 py-2.5 rounded-xl bg-rose-950/60 border border-rose-800/60 text-xs text-rose-200 flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{speechError || parseError}</span>
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {canRetryParse && !speechError && (
+              <button
+                type="button"
+                disabled={isParsing}
+                onClick={() => void runVoiceExtraction(commandText, autoAddOnVoice)}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-[11px] font-bold cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>إعادة المحاولة</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSpeechError(null);
+                setParseError(null);
+                setCanRetryParse(false);
+              }}
+              className="text-rose-300 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

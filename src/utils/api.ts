@@ -70,6 +70,9 @@ export interface FetchServerOptions {
   onWaitingForWakeup?: (info: { attempt: number; elapsedMs: number; status?: number }) => void;
 }
 
+export const FRIENDLY_AI_CONNECTION_ERROR =
+  'تعذر الاتصال بالمساعد الذكي. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى.';
+
 const DEFAULT_API_TIMEOUT_MS = 60_000;
 const COLD_START_RETRY_DELAY_MS = 3_500;
 
@@ -93,8 +96,8 @@ function sleepWithAbort(ms: number, signal?: AbortSignal | null): Promise<void> 
 
 /**
  * Diagnostic Fetch wrapper for communicating with the backend server.
- * Waits up to 60 seconds (with cold-start retries on 502/503/504 or waking sockets)
- * and logs HTTP status, Content-Type, response preview, and network/CORS failures.
+ * Waits up to 60 seconds (with cold-start retries on 502/503/504 or waking sockets),
+ * logs technical diagnostics to console, and surfaces a friendly user message on failure.
  */
 export async function fetchServerJson<T>(
   endpoint: string,
@@ -132,227 +135,235 @@ export async function fetchServerJson<T>(
   const startedAt = Date.now();
   let attempt = 0;
 
-  while (true) {
-    attempt += 1;
-
-    if (externalSignal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    const remainingMs = totalTimeoutMs - elapsedMs;
-    if (remainingMs <= 0) {
-      throw new Error(
-        `استغرق الخادم أكثر من ${Math.round(totalTimeoutMs / 1000)} ثانية للاستجابة. يرجى المحاولة مرة أخرى.`
-      );
-    }
-
-    const attemptController = new AbortController();
-    let timedOut = false;
-
-    const onExternalAbort = () => {
-      attemptController.abort();
-    };
-    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
-
-    const timeoutTimer = setTimeout(() => {
-      timedOut = true;
-      attemptController.abort();
-    }, remainingMs);
-
-    let res: Response | null = null;
-    try {
-      res = await fetch(url, {
-        ...baseRequestInit,
-        signal: attemptController.signal,
-      });
-    } catch (networkErr: unknown) {
-      clearTimeout(timeoutTimer);
-      externalSignal?.removeEventListener('abort', onExternalAbort);
+  try {
+    while (true) {
+      attempt += 1;
 
       if (externalSignal?.aborted) {
         throw new DOMException('Aborted', 'AbortError');
       }
 
-      if (timedOut) {
-        console.error('[API Fetch Error - Timeout (60s)]', {
+      const elapsedMs = Date.now() - startedAt;
+      const remainingMs = totalTimeoutMs - elapsedMs;
+      if (remainingMs <= 0) {
+        console.error('[API Fetch Error - Total Timeout Exceeded]', {
           url,
-          elapsedMs: Date.now() - startedAt,
+          elapsedMs,
           attempt,
         });
-        throw new Error(
-          `انتهت مهلة الاتصال بالمساعد (${Math.round(totalTimeoutMs / 1000)} ثانية). قد يكون الخادم لا يزال قيد التشغيل، يرجى المحاولة مجدداً.`
-        );
+        throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
       }
 
-      const timeLeftAfterErr = totalTimeoutMs - (Date.now() - startedAt);
-      if (retryOnColdStart && timeLeftAfterErr > COLD_START_RETRY_DELAY_MS + 1000) {
-        console.warn('[API Cold Start / Network Retry]', {
-          url,
-          attempt,
-          elapsedMs: Date.now() - startedAt,
-          errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
-        });
-        options?.onWaitingForWakeup?.({
-          attempt,
-          elapsedMs: Date.now() - startedAt,
-        });
-        await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
-        continue;
-      }
+      const attemptController = new AbortController();
+      let timedOut = false;
 
-      // Final failure — log full diagnostic info
-      console.error('[API Fetch Error - Network / Possible CORS Failure]', {
-        url,
-        method: baseRequestInit.method || 'GET',
-        origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
-        isCapacitorNative: isNative,
-        attempt,
-        elapsedMs: Date.now() - startedAt,
-        errorName: networkErr instanceof Error ? networkErr.name : typeof networkErr,
-        errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
-        rawError: networkErr,
-      });
+      const onExternalAbort = () => {
+        attemptController.abort();
+      };
+      externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
 
-      // Only retry relative endpoint on non-native web (on Capacitor native, relative /api/* hits local index.html)
-      if (apiBase && !isNative) {
-        try {
-          res = await fetch(endpoint, { ...baseRequestInit, signal: externalSignal });
-        } catch (retryErr: unknown) {
-          console.error('[API Fetch Retry Error]', { endpoint, retryErr });
-          throw new Error(
-            `تعذر الاتصال بالخادم (${url}). قد يكون السبب حجب CORS أو انقطاع الشبكة: ${
-              networkErr instanceof Error ? networkErr.message : String(networkErr)
-            }`
-          );
-        }
-      } else {
-        throw new Error(
-          `فشل الاتصال بخادم المساعد (${url}). السبب المحتمل: انتهاء مهلة سكون الخادم أو حجب CORS أو عدم توفر الشبكة (${
-            networkErr instanceof Error ? networkErr.message : String(networkErr)
-          }).`
-        );
-      }
-    } finally {
-      clearTimeout(timeoutTimer);
-      externalSignal?.removeEventListener('abort', onExternalAbort);
-    }
+      const timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        attemptController.abort();
+      }, remainingMs);
 
-    if (!res) {
-      throw new Error(fallbackError);
-    }
-
-    const rawText = await res.text();
-    const trimmed = rawText.trimStart();
-    const contentType = (res.headers.get('content-type') || '').toLowerCase();
-    const isJsonContent = contentType.includes('application/json');
-
-    // Cold-start gateway statuses (Render/gateway sleep returns non-JSON 502/503/504 while spinning up)
-    const isWakeupStatus =
-      (res.status === 502 || res.status === 503 || res.status === 504) && !isJsonContent;
-    const remainingAfterRes = totalTimeoutMs - (Date.now() - startedAt);
-    if (
-      isWakeupStatus &&
-      retryOnColdStart &&
-      remainingAfterRes > COLD_START_RETRY_DELAY_MS + 1000
-    ) {
-      console.warn('[API Cold Start - Server Waking Up]', {
-        url,
-        status: res.status,
-        attempt,
-        elapsedMs: Date.now() - startedAt,
-      });
-      options?.onWaitingForWakeup?.({
-        attempt,
-        elapsedMs: Date.now() - startedAt,
-        status: res.status,
-      });
-      await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
-      continue;
-    }
-
-    // Detect HTML returned instead of JSON (404 page, proxy/gateway error, or auth redirect)
-    if (
-      trimmed.startsWith('<!doctype') ||
-      trimmed.startsWith('<html') ||
-      trimmed.startsWith('<') ||
-      (contentType.includes('text/html') && !contentType.includes('application/json'))
-    ) {
-      // Some hosting gateways return a 5xx HTML "Service Starting / Loading" page during cold start
-      if (
-        res.status >= 500 &&
-        retryOnColdStart &&
-        totalTimeoutMs - (Date.now() - startedAt) > COLD_START_RETRY_DELAY_MS + 1000
-      ) {
-        console.warn('[API Cold Start - HTML Boot Page Retry]', {
-          url,
-          status: res.status,
-          attempt,
-          elapsedMs: Date.now() - startedAt,
-        });
-        options?.onWaitingForWakeup?.({
-          attempt,
-          elapsedMs: Date.now() - startedAt,
-          status: res.status,
-        });
-        await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
-        continue;
-      }
-
-      const diagnosis =
-        res.status === 404
-          ? '404 Not Found — المسار غير موجود على الخادم'
-          : res.redirected
-          ? `Redirected (${res.status}) — تم التحويل لصفحة HTML (${res.url})`
-          : res.status >= 500
-          ? `Server/Gateway Error (${res.status} ${res.statusText})`
-          : `HTML Response (${res.status} ${res.statusText})`;
-
-      console.error('[API Fetch Error - HTML Returned Instead of JSON]', {
-        diagnosis,
-        requestUrl: url,
-        responseUrl: res.url,
-        status: res.status,
-        statusText: res.statusText,
-        redirected: res.redirected,
-        contentType,
-        bodyPreview: rawText.slice(0, 500),
-      });
-
-      throw new Error(
-        `استجاب الخادم بصفحة HTML بدلاً من JSON [${diagnosis}] على الرابط: ${url}`
-      );
-    }
-
-    let data: any = {};
-    if (trimmed) {
+      let res: Response | null = null;
       try {
-        data = JSON.parse(rawText);
-      } catch (parseErr) {
-        console.error('[API Fetch Error - Invalid JSON]', {
+        res = await fetch(url, {
+          ...baseRequestInit,
+          signal: attemptController.signal,
+        });
+      } catch (networkErr: unknown) {
+        clearTimeout(timeoutTimer);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
+
+        if (externalSignal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        if (timedOut) {
+          console.error('[API Fetch Error - Timeout (60s)]', {
+            url,
+            elapsedMs: Date.now() - startedAt,
+            attempt,
+          });
+          throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+        }
+
+        const timeLeftAfterErr = totalTimeoutMs - (Date.now() - startedAt);
+        if (retryOnColdStart && timeLeftAfterErr > COLD_START_RETRY_DELAY_MS + 1000) {
+          console.warn('[API Cold Start / Network Retry]', {
+            url,
+            attempt,
+            elapsedMs: Date.now() - startedAt,
+            errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
+          });
+          options?.onWaitingForWakeup?.({
+            attempt,
+            elapsedMs: Date.now() - startedAt,
+          });
+          await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+          continue;
+        }
+
+        // Final failure — log full technical diagnostic info to console only
+        console.error('[API Fetch Error - Network / Possible CORS Failure]', {
+          url,
+          method: baseRequestInit.method || 'GET',
+          origin: typeof window !== 'undefined' ? window.location.origin : 'unknown',
+          isCapacitorNative: isNative,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          errorName: networkErr instanceof Error ? networkErr.name : typeof networkErr,
+          errorMessage: networkErr instanceof Error ? networkErr.message : String(networkErr),
+          rawError: networkErr,
+        });
+
+        // Only retry relative endpoint on non-native web (on Capacitor native, relative /api/* hits local index.html)
+        if (apiBase && !isNative) {
+          try {
+            res = await fetch(endpoint, { ...baseRequestInit, signal: externalSignal });
+          } catch (retryErr: unknown) {
+            console.error('[API Fetch Retry Error]', { endpoint, retryErr });
+            throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+          }
+        } else {
+          throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+        }
+      } finally {
+        clearTimeout(timeoutTimer);
+        externalSignal?.removeEventListener('abort', onExternalAbort);
+      }
+
+      if (!res) {
+        console.error('[API Fetch Error - Empty Response]', { url, fallbackError });
+        throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+      }
+
+      const rawText = await res.text();
+      const trimmed = rawText.trimStart();
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      const isJsonContent = contentType.includes('application/json');
+
+      // Cold-start gateway statuses (Render/gateway sleep returns non-JSON 502/503/504 while spinning up)
+      const isWakeupStatus =
+        (res.status === 502 || res.status === 503 || res.status === 504) && !isJsonContent;
+      const remainingAfterRes = totalTimeoutMs - (Date.now() - startedAt);
+      if (
+        isWakeupStatus &&
+        retryOnColdStart &&
+        remainingAfterRes > COLD_START_RETRY_DELAY_MS + 1000
+      ) {
+        console.warn('[API Cold Start - Server Waking Up]', {
+          url,
+          status: res.status,
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+        });
+        options?.onWaitingForWakeup?.({
+          attempt,
+          elapsedMs: Date.now() - startedAt,
+          status: res.status,
+        });
+        await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+        continue;
+      }
+
+      // Detect HTML returned instead of JSON (404 page, proxy/gateway error, or auth redirect)
+      if (
+        trimmed.startsWith('<!doctype') ||
+        trimmed.startsWith('<html') ||
+        trimmed.startsWith('<') ||
+        (contentType.includes('text/html') && !contentType.includes('application/json'))
+      ) {
+        // Some hosting gateways return a 5xx HTML "Service Starting / Loading" page during cold start
+        if (
+          res.status >= 500 &&
+          retryOnColdStart &&
+          totalTimeoutMs - (Date.now() - startedAt) > COLD_START_RETRY_DELAY_MS + 1000
+        ) {
+          console.warn('[API Cold Start - HTML Boot Page Retry]', {
+            url,
+            status: res.status,
+            attempt,
+            elapsedMs: Date.now() - startedAt,
+          });
+          options?.onWaitingForWakeup?.({
+            attempt,
+            elapsedMs: Date.now() - startedAt,
+            status: res.status,
+          });
+          await sleepWithAbort(COLD_START_RETRY_DELAY_MS, externalSignal);
+          continue;
+        }
+
+        const diagnosis =
+          res.status === 404
+            ? '404 Not Found'
+            : res.redirected
+            ? `Redirected (${res.status}) -> ${res.url}`
+            : res.status >= 500
+            ? `Server/Gateway Error (${res.status} ${res.statusText})`
+            : `HTML Response (${res.status} ${res.statusText})`;
+
+        console.error('[API Fetch Error - HTML Returned Instead of JSON]', {
+          diagnosis,
+          requestUrl: url,
+          responseUrl: res.url,
+          status: res.status,
+          statusText: res.statusText,
+          redirected: res.redirected,
+          contentType,
+          bodyPreview: rawText.slice(0, 500),
+        });
+
+        throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+      }
+
+      let data: any = {};
+      if (trimmed) {
+        try {
+          data = JSON.parse(rawText);
+        } catch (parseErr) {
+          console.error('[API Fetch Error - Invalid JSON]', {
+            requestUrl: url,
+            status: res.status,
+            statusText: res.statusText,
+            contentType,
+            bodyPreview: rawText.slice(0, 500),
+            parseErr,
+          });
+          throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
+        }
+      }
+
+      if (!res.ok) {
+        console.error('[API Fetch Error - HTTP Status]', {
           requestUrl: url,
           status: res.status,
           statusText: res.statusText,
           contentType,
-          bodyPreview: rawText.slice(0, 500),
-          parseErr,
+          data,
         });
-        throw new Error(`${fallbackError} (HTTP ${res.status})`);
+        throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
       }
-    }
 
-    if (!res.ok) {
-      console.error('[API Fetch Error - HTTP Status]', {
-        requestUrl: url,
-        status: res.status,
-        statusText: res.statusText,
-        contentType,
-        data,
-      });
-      throw new Error(data?.error || `${fallbackError} (HTTP ${res.status})`);
+      return data as T;
     }
-
-    return data as T;
+  } catch (err: unknown) {
+    if (
+      (err instanceof DOMException && err.name === 'AbortError') ||
+      (err instanceof Error && err.name === 'AbortError') ||
+      externalSignal?.aborted
+    ) {
+      throw err;
+    }
+    console.error('[API Fetch Error - Unhandled]', {
+      url,
+      fallbackError,
+      error: err,
+    });
+    throw new Error(FRIENDLY_AI_CONNECTION_ERROR);
   }
 }
 

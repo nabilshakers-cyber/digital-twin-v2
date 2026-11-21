@@ -14,7 +14,6 @@ import {
   VolumeX,
   Cloud,
   CloudOff,
-  LogIn,
   RefreshCw,
   Bell,
   BellRing,
@@ -26,7 +25,22 @@ import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
 import { PWAInstallButton } from './PWAInstallButton';
 
-export type AppNavTab = 'dashboard' | 'tasks' | 'schedule' | 'focus' | 'notifications';
+export type AppNavTab =
+  | 'dashboard'
+  | 'tasks'
+  | 'schedule'
+  | 'focus'
+  | 'notifications'
+  | 'settings';
+
+const NAV_TAB_LABELS: Record<AppNavTab, string> = {
+  dashboard: 'الرئيسية',
+  tasks: 'المهام',
+  schedule: 'الجدول اليومي',
+  focus: 'التركيز العميق',
+  notifications: 'الإشعارات',
+  settings: 'الإعدادات',
+};
 
 interface NavbarProps {
   currentTab: AppNavTab;
@@ -138,9 +152,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, []);
 
   return (
-    <header className="sticky top-0 z-30 bg-[#0f172a]/90 backdrop-blur-md border-b border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 gap-4">
+    <>
+      <header className="sticky top-0 z-30 bg-[#0f172a]/90 backdrop-blur-md border-b border-slate-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 gap-4">
           
           {/* Brand & Digital Twin identity */}
           <div className="flex items-center gap-3">
@@ -168,6 +183,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
               <p className="text-xs text-slate-400 hidden sm:block">
                 مزامنة الأداء: <span className="text-emerald-400 font-semibold">{syncScore}%</span> • {currentDate}
+              </p>
+              <p className="text-[11px] text-cyan-400 font-semibold sm:hidden">
+                {NAV_TAB_LABELS[currentTab]}
               </p>
             </div>
           </div>
@@ -275,7 +293,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="btn-twin-settings"
               type="button"
               onClick={onOpenProfile}
-              className="flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-all whitespace-nowrap cursor-pointer"
+              className={`flex items-center gap-1.5 px-2.5 lg:px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
+                currentTab === 'settings'
+                  ? 'bg-cyan-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
               title="الإعدادات والمكونات المخصصة"
             >
               <Settings className="w-4 h-4 shrink-0" />
@@ -319,16 +341,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <Sparkles className="w-4 h-4" />
             </button>
 
-            {/* In-App Auth & Sync Badge */}
-            {authUser ? (
+            {/* Firebase Auth & Cloud Sync Badge */}
+            {authUser && (
               <button
                 type="button"
                 id="btn-cloud-sync-status"
                 onClick={onOpenCloudSettings}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
-                  authUser.mode === 'local'
-                    ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-200 hover:bg-emerald-900/60'
-                    : cloudSyncStatus === 'syncing'
+                  cloudSyncStatus === 'syncing'
                     ? 'bg-cyan-950/70 border-cyan-500/50 text-cyan-200'
                     : cloudSyncStatus === 'error'
                     ? 'bg-rose-950/70 border-rose-500/50 text-rose-200'
@@ -336,142 +356,144 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }`}
                 title={`مسجّل باسم ${authUser.displayName || authUser.email || ''} — اضغط لإدارة الحساب أو تسجيل الخروج`}
               >
-                {authUser.mode === 'firebase' && cloudSyncStatus === 'syncing' ? (
+                {cloudSyncStatus === 'syncing' ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-300" />
-                ) : authUser.mode === 'firebase' && cloudSyncStatus === 'error' ? (
+                ) : cloudSyncStatus === 'error' ? (
                   <CloudOff className="w-3.5 h-3.5 text-rose-300" />
                 ) : (
                   <Cloud className="w-3.5 h-3.5 text-emerald-300" />
                 )}
                 <span className="hidden lg:inline max-w-[100px] truncate">
-                  {authUser.displayName?.split(' ')[0] || 'مسجّل'}
+                  {authUser.displayName?.split(' ')[0] || profile.name.split(' ')[0] || 'حسابي'}
                 </span>
               </button>
-            ) : (
-              <button
-                type="button"
-                id="btn-google-signin"
-                disabled={authLoading}
-                onClick={onSignIn}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                title="تسجيل الدخول محلياً داخل التطبيق"
-              >
-                <LogIn className="w-3.5 h-3.5 shrink-0" />
-                <span className="hidden sm:inline md:hidden xl:inline">تسجيل الدخول</span>
-              </button>
             )}
 
-            {/* Android / PWA Install Action */}
-            <PWAInstallButton />
-          </div>
+          {/* Android / PWA Install Action */}
+          <PWAInstallButton />
         </div>
       </div>
+    </div>
+  </header>
 
-      {/* Android-Style Fixed Bottom Navigation Bar (Mobile) */}
-      <nav
-        aria-label="التنقل السفلي"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0b1120]/95 backdrop-blur-lg border-t border-slate-800/90 px-1.5 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,0,0,0.45)]"
+  {/* Restored Mobile Bottom Navigation Bar (All 6 Main Menus + Swipe Support across Views) */}
+  <nav
+    aria-label="التنقل الرئيسي السريع"
+    className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#0f172a]/95 backdrop-blur-xl border-t border-slate-800/90 shadow-2xl pb-[env(safe-area-inset-bottom)]"
+  >
+    <div className="grid grid-cols-6 items-stretch h-16 max-w-lg mx-auto px-1">
+      <button
+        type="button"
+        id="mobile-nav-dashboard"
+        onClick={() => setCurrentTab('dashboard')}
+        aria-current={currentTab === 'dashboard' ? 'page' : undefined}
+        className={`flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'dashboard'
+            ? 'text-cyan-300 bg-cyan-500/15'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
       >
-        <div className="flex items-center justify-around text-[10px] sm:text-[11px]">
-          <button
-            onClick={() => setCurrentTab('dashboard')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
-              currentTab === 'dashboard'
-                ? 'text-cyan-300 font-bold bg-cyan-500/15'
-                : 'text-slate-400'
-            }`}
-          >
-            <LayoutDashboard className="w-5 h-5" />
-            <span>الرئيسية</span>
-          </button>
+        <LayoutDashboard className="w-4 h-4 shrink-0" />
+        <span className="truncate">الرئيسية</span>
+      </button>
 
-          <button
-            onClick={() => setCurrentTab('tasks')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
-              currentTab === 'tasks'
-                ? 'text-cyan-300 font-bold bg-cyan-500/15'
-                : 'text-slate-400'
-            }`}
-          >
-            <CheckSquare className="w-5 h-5" />
-            <span>المهام</span>
-          </button>
+      <button
+        type="button"
+        id="mobile-nav-tasks"
+        onClick={() => setCurrentTab('tasks')}
+        aria-current={currentTab === 'tasks' ? 'page' : undefined}
+        className={`flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'tasks'
+            ? 'text-cyan-300 bg-cyan-500/15'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <CheckSquare className="w-4 h-4 shrink-0" />
+        <span className="truncate">المهام</span>
+      </button>
 
-          <button
-            onClick={() => setCurrentTab('schedule')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
-              currentTab === 'schedule'
-                ? 'text-cyan-300 font-bold bg-cyan-500/15'
-                : 'text-slate-400'
-            }`}
-          >
-            <Calendar className="w-5 h-5" />
-            <span>الجدول</span>
-          </button>
+      <button
+        type="button"
+        id="mobile-nav-schedule"
+        onClick={() => setCurrentTab('schedule')}
+        aria-current={currentTab === 'schedule' ? 'page' : undefined}
+        className={`flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'schedule'
+            ? 'text-cyan-300 bg-cyan-500/15'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <Calendar className="w-4 h-4 shrink-0" />
+        <span className="truncate">الجدول</span>
+      </button>
 
-          <button
-            onClick={() => setCurrentTab('focus')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all ${
-              currentTab === 'focus'
-                ? 'text-amber-300 font-bold bg-amber-500/15'
-                : 'text-slate-400'
-            }`}
-          >
-            <Flame className="w-5 h-5" />
-            <span>التركيز</span>
-          </button>
+      <button
+        type="button"
+        id="mobile-nav-focus"
+        onClick={() => setCurrentTab('focus')}
+        aria-current={currentTab === 'focus' ? 'page' : undefined}
+        className={`flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'focus'
+            ? 'text-amber-300 bg-amber-500/15'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <Flame className="w-4 h-4 shrink-0" />
+        <span className="truncate">التركيز</span>
+      </button>
 
-          <a
-            id="btn-notifications-center-mobile"
-            href="#/notifications"
-            onClick={(e) => handleNavClick(e, 'notifications')}
-            aria-current={isNotificationsTab ? 'page' : undefined}
-            title="الانتقال إلى صفحة الإشعارات والتذكيرات"
-            className={`relative flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl transition-all cursor-pointer ${
-              isNotificationsTab
-                ? 'text-cyan-300 font-bold bg-cyan-500/15'
-                : isDndActive
-                ? 'text-indigo-300'
-                : overdueCount > 0
-                ? 'text-rose-300'
-                : totalNotificationsCount > 0
-                ? 'text-amber-300'
-                : 'text-slate-400'
-            }`}
-          >
-            {isDndActive ? (
-              <BellOff className="w-5 h-5" />
-            ) : overdueCount > 0 ? (
-              <BellRing className="w-5 h-5 animate-bounce" />
-            ) : (
-              <Bell className="w-5 h-5" />
-            )}
-            <span>الإشعارات</span>
-            {!isDndActive && totalNotificationsCount > 0 && (
-              <span
-                className={`absolute top-0.5 right-0.5 min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow ${
-                  overdueCount > 0
-                    ? 'bg-rose-500 text-white'
-                    : 'bg-amber-400 text-slate-950'
-                }`}
-              >
-                {totalNotificationsCount}
-              </span>
-            )}
-          </a>
+      <button
+        type="button"
+        id="mobile-nav-notifications"
+        onClick={() => setCurrentTab('notifications')}
+        aria-current={currentTab === 'notifications' ? 'page' : undefined}
+        className={`relative flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'notifications'
+            ? 'text-cyan-300 bg-cyan-500/15'
+            : overdueCount > 0 && !isDndActive
+            ? 'text-rose-300'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <span className="relative">
+          {isDndActive ? (
+            <BellOff className="w-4 h-4 shrink-0" />
+          ) : overdueCount > 0 ? (
+            <BellRing className="w-4 h-4 shrink-0" />
+          ) : (
+            <Bell className="w-4 h-4 shrink-0" />
+          )}
+          {!isDndActive && totalNotificationsCount > 0 && (
+            <span
+              className={`absolute -top-1.5 -left-2 min-w-[15px] h-[15px] px-1 rounded-full text-[9px] font-black flex items-center justify-center ${
+                overdueCount > 0
+                  ? 'bg-rose-500 text-white'
+                  : 'bg-amber-400 text-slate-950'
+              }`}
+            >
+              {totalNotificationsCount > 9 ? '9+' : totalNotificationsCount}
+            </span>
+          )}
+        </span>
+        <span className="truncate">الإشعارات</span>
+      </button>
 
-          <button
-            id="btn-twin-settings-mobile"
-            type="button"
-            onClick={onOpenProfile}
-            className="flex flex-col items-center gap-1 py-1.5 px-2 rounded-2xl text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
-            title="الإعدادات والمكونات المخصصة"
-          >
-            <Settings className="w-5 h-5" />
-            <span>الإعدادات</span>
-          </button>
-        </div>
-      </nav>
-    </header>
+      <button
+        type="button"
+        id="mobile-nav-settings"
+        onClick={onOpenProfile}
+        aria-current={currentTab === 'settings' ? 'page' : undefined}
+        className={`flex flex-col items-center justify-center gap-1 text-[10px] font-bold transition-colors cursor-pointer rounded-xl my-1 ${
+          currentTab === 'settings'
+            ? 'text-cyan-300 bg-cyan-500/15'
+            : 'text-slate-400 hover:text-slate-200'
+        }`}
+      >
+        <Settings className="w-4 h-4 shrink-0" />
+        <span className="truncate">الإعدادات</span>
+      </button>
+    </div>
+  </nav>
+</>
   );
 };

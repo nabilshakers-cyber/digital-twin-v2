@@ -10,10 +10,12 @@ import {
   ArrowRight,
   Send,
   Mic,
-  MicOff
+  MicOff,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { Task, TimeBlock } from '../types';
-import { parseQuickEntryWithAI } from '../utils/api';
+import { FRIENDLY_AI_CONNECTION_ERROR, parseQuickEntryWithAI } from '../utils/api';
 import { useWebSpeech } from '../hooks/useWebSpeech';
 import { useModalScrollLock } from '../utils/modalCoordinator';
 import confetti from 'canvas-confetti';
@@ -31,6 +33,8 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
 }) => {
   const [naturalText, setNaturalText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [extractedResult, setExtractedResult] = useState<{
     extractedTasks: Partial<Task>[];
     extractedEvents: Partial<TimeBlock>[];
@@ -48,6 +52,8 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
     lang: 'ar-SA',
     continuous: false,
     onFinalTranscript: (finalText) => {
+      setValidationError(null);
+      setErrorMsg(null);
       setNaturalText((prev) => (prev ? `${prev} ${finalText}` : finalText));
     },
   });
@@ -57,8 +63,14 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
   if (!isOpen) return null;
 
   const handleParse = async () => {
-    if (!naturalText.trim() || isLoading) return;
+    if (isLoading) return;
+    if (!naturalText.trim()) {
+      setValidationError('يرجى كتابة عنوان المهمة أولاً.');
+      return;
+    }
 
+    setValidationError(null);
+    setErrorMsg(null);
     setIsLoading(true);
     try {
       const result = await parseQuickEntryWithAI({
@@ -67,7 +79,8 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
       });
       setExtractedResult(result);
     } catch (e) {
-      console.error(e);
+      console.error('[SmartQuickAddModal] parseQuickEntryWithAI failed:', e);
+      setErrorMsg(FRIENDLY_AI_CONNECTION_ERROR);
     } finally {
       setIsLoading(false);
     }
@@ -124,10 +137,25 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
             <textarea
               rows={3}
               value={isSpeechListening && speechInterim ? `${naturalText} ${speechInterim}`.trim() : naturalText}
-              onChange={(e) => setNaturalText(e.target.value)}
+              onChange={(e) => {
+                setNaturalText(e.target.value);
+                if (validationError && e.target.value.trim()) setValidationError(null);
+                if (errorMsg) setErrorMsg(null);
+              }}
               placeholder="مثال: غداً عندي اجتماع مع الفريق الساعة 10:30 صباحاً، وكتابة تقرير المبيعات لمدة ساعة، وممارسة رياضة المشي بعد المغرب..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500 resize-none transition-colors"
+              className={`w-full bg-slate-950 border rounded-2xl p-3.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none resize-none transition-colors ${
+                validationError
+                  ? 'border-rose-500/80 focus:border-rose-400'
+                  : 'border-slate-800 focus:border-cyan-500'
+              }`}
             />
+
+            {validationError && (
+              <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-700/60 px-3 py-2 rounded-xl flex items-center gap-1.5 font-semibold">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{validationError}</span>
+              </p>
+            )}
 
             {speechError && (
               <p className="text-[11px] text-rose-300 bg-rose-950/50 border border-rose-800/60 px-2.5 py-1.5 rounded-lg">
@@ -135,13 +163,32 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
               </p>
             )}
 
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-700/60 text-xs text-rose-100 flex flex-wrap items-center justify-between gap-2 animate-fadeIn">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>{errorMsg}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleParse()}
+                  disabled={isLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>إعادة المحاولة</span>
+                </button>
+              </div>
+            )}
+
             <div className="flex flex-wrap justify-between items-center gap-2 text-[11px] text-slate-400">
               <div className="flex items-center gap-2">
                 {isSpeechSupported && (
                   <button
                     type="button"
+                    disabled={isLoading}
                     onClick={() => (isSpeechListening ? stopSpeechListening() : startSpeechListening())}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 ${
                       isSpeechListening
                         ? 'bg-rose-600 border-rose-500 text-white animate-pulse'
                         : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-cyan-300'
@@ -153,23 +200,25 @@ export const SmartQuickAddModal: React.FC<SmartQuickAddModalProps> = ({
                 )}
                 <span>يمكنك كتابة أو إملاء عدة مهام ومواعيد دفعة واحدة</span>
               </div>
-              <button
-                onClick={handleParse}
-                disabled={!naturalText.trim() || isLoading}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-bold transition-all shadow-md shadow-cyan-600/20 cursor-pointer"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>جاري التحليل...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                    <span>تحليل واستخراج ذكي</span>
-                  </>
-                )}
-              </button>
+              {isLoading ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-950/70 border border-cyan-700/60 text-cyan-300 font-bold"
+                >
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span className="animate-pulse">جاري التفكير...</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleParse}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold transition-all shadow-md shadow-cyan-600/20 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>تحليل واستخراج ذكي</span>
+                </button>
+              )}
             </div>
           </div>
 

@@ -27,6 +27,7 @@ import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
 import { Task } from '../types';
 import {
   cancelReminder,
+  NOTIFICATION_DENIED_ALERT_MESSAGE,
   ScheduledLocalReminder,
   useScheduledReminders,
 } from '../utils/localNotifications';
@@ -179,7 +180,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                 {pushPermission === 'unsupported'
                   ? 'التنبيهات المرئية والمحلية نشطة'
                   : pushPermission === 'denied'
-                  ? 'إشعارات المتصفح محظورة (التنبيهات المرئية نشطة)'
+                  ? NOTIFICATION_DENIED_ALERT_MESSAGE
                   : pushPermission === 'granted'
                   ? pushEnabled
                     ? 'إشعارات الدفع (Push) مفعلة'
@@ -283,6 +284,16 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
             </div>
           </div>
         </div>
+
+        {pushPermission === 'denied' && (
+          <div
+            role="alert"
+            className="mt-3 px-3.5 py-2.5 rounded-xl bg-amber-950/50 border border-amber-700/60 text-xs text-amber-200 flex items-center gap-2 font-medium"
+          >
+            <BellOff className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{NOTIFICATION_DENIED_ALERT_MESSAGE}</span>
+          </div>
+        )}
       </div>
 
       {/* Main Content Grid */}

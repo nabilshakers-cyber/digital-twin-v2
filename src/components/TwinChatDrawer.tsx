@@ -20,6 +20,8 @@ import {
   Target,
   RotateCcw,
   Wand2,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   ChatMessage,
@@ -30,7 +32,11 @@ import {
   Task,
   TimeBlock,
 } from '../types';
-import { askDigitalAssistant, processVoiceNoteWithAI } from '../utils/api';
+import {
+  askDigitalAssistant,
+  FRIENDLY_AI_CONNECTION_ERROR,
+  processVoiceNoteWithAI,
+} from '../utils/api';
 import { useModalScrollLock } from '../utils/modalCoordinator';
 
 interface TwinChatDrawerProps {
@@ -94,6 +100,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
   const recordingDurationRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeRequestAbortRef = useRef<AbortController | null>(null);
+  const failedVoiceMapRef = useRef<Map<string, { blob: Blob; durationSec: number }>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -135,19 +142,33 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
     };
   }, []);
 
-  const handleSendMessage = async (textToSend?: string) => {
-    const text = textToSend || inputText;
-    if (!text.trim() || isLoading) return;
+  const handleSendMessage = async (
+    textToSend?: string,
+    options?: { retryErrorMsgId?: string }
+  ) => {
+    const text = textToSend ?? inputText;
+    if (!text.trim() || isLoading || isProcessingVoice) return;
 
-    const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
-      role: 'user',
-      content: text.trim(),
-      timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
-    };
+    const cleanText = text.trim();
+    const isRetry = Boolean(options?.retryErrorMsgId);
+    const cleanHistory = messages.filter(
+      (m) => !m.isError && m.id !== options?.retryErrorMsgId
+    );
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInputText('');
+    if (isRetry && options?.retryErrorMsgId) {
+      const errorId = options.retryErrorMsgId;
+      setMessages((prev) => prev.filter((m) => m.id !== errorId));
+    } else {
+      const userMsg: ChatMessage = {
+        id: `u-${Date.now()}`,
+        role: 'user',
+        content: cleanText,
+        timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setInputText('');
+    }
+
     setIsLoading(true);
     setIsWakingServer(false);
 
@@ -158,8 +179,8 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
     try {
       const result = await askDigitalAssistant(
         {
-          message: userMsg.content,
-          history: messages,
+          message: cleanText,
+          history: cleanHistory,
           profile,
           tasks,
           schedule,
@@ -199,15 +220,16 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         return;
       }
+      console.error('[TwinChatDrawer] Assistant request failed:', err);
       setMessages((prev) => [
         ...prev,
         {
           id: `t-err-${Date.now()}`,
           role: 'twin',
-          content:
-            err?.message ||
-            'عذراً، حدث خطأ في الاتصال بالمساعد الرقمي AI. يرجى المحاولة مرة أخرى.',
+          content: FRIENDLY_AI_CONNECTION_ERROR,
           timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+          retryPrompt: cleanText,
         },
       ]);
     } finally {
@@ -216,6 +238,20 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
       }
       setIsLoading(false);
       setIsWakingServer(false);
+    }
+  };
+
+  const handleRetryMessage = (msg: ChatMessage) => {
+    if (isLoading || isProcessingVoice) return;
+    const failedVoice = failedVoiceMapRef.current.get(msg.id);
+    if (failedVoice) {
+      failedVoiceMapRef.current.delete(msg.id);
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      void handleAudioBlobSubmit(failedVoice.blob, failedVoice.durationSec);
+      return;
+    }
+    if (msg.retryPrompt) {
+      void handleSendMessage(msg.retryPrompt, { retryErrorMsgId: msg.id });
     }
   };
 
@@ -326,7 +362,19 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
       if (err?.name === 'AbortError' || controller.signal.aborted) {
         return;
       }
-      setVoiceError(err.message || 'تعذر تحويل الملاحظة الصوتية، يرجى المحاولة مرة أخرى.');
+      console.error('[TwinChatDrawer] Voice note request failed:', err);
+      const errId = `t-err-${Date.now()}`;
+      failedVoiceMapRef.current.set(errId, { blob, durationSec });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: errId,
+          role: 'twin',
+          content: FRIENDLY_AI_CONNECTION_ERROR,
+          timestamp: new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+        },
+      ]);
     } finally {
       if (activeRequestAbortRef.current === controller) {
         activeRequestAbortRef.current = null;
@@ -535,7 +583,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
               </h3>
               <p className="text-[11px] text-emerald-400 font-medium truncate">
                 {isLoading || isProcessingVoice
-                  ? 'جاري الاتصال بالمساعد...'
+                  ? 'جاري التفكير...'
                   : 'تحليل المهام • جدولة ذكية • صوت ونص'}
               </p>
             </div>
@@ -601,7 +649,9 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
                 {/* Bubble */}
                 <div
                   className={`max-w-[85%] rounded-2xl p-3.5 text-xs leading-relaxed space-y-2.5 ${
-                    isTwin
+                    msg.isError
+                      ? 'bg-rose-950/40 border border-rose-700/60 text-rose-100 shadow-md'
+                      : isTwin
                       ? 'bg-slate-950 border border-slate-800 text-slate-200 shadow-md'
                       : 'bg-cyan-600 text-white shadow-md'
                   }`}
@@ -630,7 +680,25 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
                     </div>
                   )}
 
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {msg.isError ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <p className="whitespace-pre-wrap text-rose-100 font-medium">{msg.content}</p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isLoading || isProcessingVoice}
+                        onClick={() => handleRetryMessage(msg)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white text-[11px] font-bold shadow-sm transition-colors cursor-pointer shrink-0"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>إعادة المحاولة</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  )}
 
                   {/* Extracted Tasks & Events from Voice Note */}
                   {isTwin &&
@@ -794,11 +862,7 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
               <div className="bg-slate-950 border border-cyan-900/60 rounded-2xl p-3.5 text-xs text-slate-200 space-y-2 max-w-[85%] shadow-md">
                 <div className="flex items-center gap-2 font-semibold text-cyan-300">
                   <Loader2 className="w-4 h-4 animate-spin text-cyan-400 shrink-0" />
-                  <span>
-                    {isProcessingVoice
-                      ? 'جاري الاتصال بالمساعد وتحليل الملاحظة الصوتية...'
-                      : 'جاري الاتصال بالمساعد...'}
-                  </span>
+                  <span className="animate-pulse">جاري التفكير...</span>
                 </div>
 
                 {(isWakingServer || loadingElapsedSec >= 3) && (
@@ -923,18 +987,25 @@ export const TwinChatDrawer: React.FC<TwinChatDrawerProps> = ({
               className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
             />
 
-            <button
-              type="submit"
-              disabled={!inputText.trim() || isLoading || isProcessingVoice}
-              className="p-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white transition-all cursor-pointer"
-              title={isLoading || isProcessingVoice ? 'جاري الاتصال بالمساعد...' : 'إرسال'}
-            >
-              {isLoading || isProcessingVoice ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+            {isLoading || isProcessingVoice ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-950/70 border border-cyan-700/60 text-cyan-300 text-xs font-bold shrink-0"
+              >
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <span className="animate-pulse">جاري التفكير...</span>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={!inputText.trim()}
+                className="p-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white transition-all cursor-pointer"
+                title="إرسال"
+              >
                 <Send className="w-4 h-4 rotate-180" />
-              )}
-            </button>
+              </button>
+            )}
           </form>
         )}
 

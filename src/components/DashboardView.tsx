@@ -236,8 +236,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           />
         );
 
-      case 'quran_tracker':
-        return (
+      case 'quran_tracker': {
+        const isWorshipPriority = Boolean(profile.focusAreas?.includes('worship'));
+        const tracker = (
           <QuranTrackerView
             initialItems={quranRoutine}
             onToggleItem={onToggleQuranRoutine}
@@ -251,6 +252,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onToggleNotifications={onToggleQuranNotifications}
           />
         );
+        if (!isWorshipPriority) return tracker;
+        return (
+          <div className="rounded-3xl p-1 bg-gradient-to-br from-emerald-500/40 via-cyan-500/20 to-emerald-700/30 shadow-xl shadow-emerald-950/40">
+            <div className="flex items-center justify-between px-4 py-2 text-xs font-bold text-emerald-200">
+              <span className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                <span>مُبرز في واجهتك الرئيسية: ويدجت الأذكار وتعاهد القرآن</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[10px] text-emerald-200">
+                مجال العبادة
+              </span>
+            </div>
+            {tracker}
+          </div>
+        );
+      }
 
       case 'phone_apps':
         if (

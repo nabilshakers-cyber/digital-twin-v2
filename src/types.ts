@@ -50,6 +50,8 @@ export interface TimeBlock {
   googleCalendarUpdated?: string;
 }
 
+export type OnboardingFocusArea = 'work' | 'worship' | 'health';
+
 export interface DigitalTwinProfile {
   name: string;
   role: string;
@@ -66,6 +68,9 @@ export interface DigitalTwinProfile {
   endOfDayAlertTime?: string;
   focusSessionMinutes?: number;
   comfortReadingMode?: boolean;
+  preferredTimePeriod?: 'morning' | 'evening';
+  focusAreas?: OnboardingFocusArea[];
+  onboardingCompleted?: boolean;
 }
 
 export interface ChatMessage {
@@ -81,6 +86,8 @@ export interface ChatMessage {
   suggestedGoals?: Partial<LongTermGoal>[];
   tasksImported?: boolean;
   goalsImported?: boolean;
+  isError?: boolean;
+  retryPrompt?: string;
   suggestedAction?: {
     type:
       | 'create_task'
