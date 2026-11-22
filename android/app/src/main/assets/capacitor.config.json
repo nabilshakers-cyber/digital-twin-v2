@@ -19,6 +19,12 @@
 				"banner",
 				"list"
 			]
+		},
+		"FirebaseAuthentication": {
+			"skipNativeAuth": true,
+			"providers": [
+				"google.com"
+			]
 		}
 	}
 }
