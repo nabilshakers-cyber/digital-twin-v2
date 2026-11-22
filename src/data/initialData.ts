@@ -30,6 +30,7 @@ export const defaultTasks: Task[] = [
     dueDate: new Date().toISOString().split('T')[0],
     dueTime: '11:00',
     energyRequired: 'high',
+    tags: ['عمل', 'عاجل'],
     isTopPriority: true,
     createdAt: new Date().toISOString(),
     subtasks: [
@@ -49,6 +50,7 @@ export const defaultTasks: Task[] = [
     dueDate: new Date().toISOString().split('T')[0],
     dueTime: '13:00',
     energyRequired: 'medium',
+    tags: ['عمل'],
     isTopPriority: true,
     createdAt: new Date().toISOString(),
   },
@@ -63,6 +65,7 @@ export const defaultTasks: Task[] = [
     dueDate: new Date().toISOString().split('T')[0],
     dueTime: '17:30',
     energyRequired: 'medium',
+    tags: ['صحة', 'شخصي'],
     isTopPriority: true,
     createdAt: new Date().toISOString(),
   },
@@ -77,6 +80,7 @@ export const defaultTasks: Task[] = [
     dueDate: new Date().toISOString().split('T')[0],
     dueTime: '21:00',
     energyRequired: 'low',
+    tags: ['دراسة'],
     createdAt: new Date().toISOString(),
   },
   {
@@ -90,6 +94,7 @@ export const defaultTasks: Task[] = [
     completedAt: new Date().toISOString(),
     dueDate: new Date().toISOString().split('T')[0],
     energyRequired: 'low',
+    tags: ['شخصي'],
     createdAt: new Date().toISOString(),
   },
 ];

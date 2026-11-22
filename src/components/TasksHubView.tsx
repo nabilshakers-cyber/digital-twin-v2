@@ -29,16 +29,26 @@ import {
   RefreshCw,
   ArrowLeftRight,
   Undo2,
+  MapPin,
 } from 'lucide-react';
-import { Task, Priority, TaskCategory, TaskStatus } from '../types';
+import { Task, Priority, TaskCategory, TaskStatus, SavedLocation, TaskLocationReminder, TaskTag, TaskTagColor } from '../types';
 import { FRIENDLY_AI_CONNECTION_ERROR } from '../utils/api';
 import { evaluateTaskUrgency } from '../utils/reminderEngine';
 import {
   getSmartReschedulingSuggestions,
   getTomorrowDateString,
 } from '../utils/burnoutEngine';
+import { formatDistanceArabic } from '../utils/geofencing';
+import {
+  getTagStyleByColor,
+  getTagStyleForName,
+  mergeAvailableTags,
+  normalizeTagName,
+  TASK_TAG_COLOR_OPTIONS,
+} from '../utils/taskTags';
 import { useScheduledReminders } from '../utils/localNotifications';
 import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
+import { LocationPickerModal } from './LocationPickerModal';
 import { broadcastCloseAllModals } from '../utils/modalCoordinator';
 import { SwipeableTaskCard, SwipeOpenSide } from './SwipeableTaskCard';
 
@@ -55,6 +65,12 @@ interface TasksHubViewProps {
   onOpenContextualBriefing: (task: Task) => void;
   onPostponeTask: (taskId: string) => void;
   onAutoClassifyTasks?: (tasksToClassify: Task[]) => Promise<{ count: number; summary: string }>;
+  savedLocations?: SavedLocation[];
+  locationTrackingEnabled?: boolean;
+  onSaveLocation?: (loc: SavedLocation) => void;
+  customTags?: TaskTag[];
+  onCreateCustomTag?: (name: string, color?: TaskTagColor) => TaskTag | null;
+  onDeleteCustomTag?: (tagId: string) => void;
 }
 
 export const TasksHubView: React.FC<TasksHubViewProps> = ({
@@ -70,11 +86,18 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   onOpenContextualBriefing,
   onPostponeTask,
   onAutoClassifyTasks,
+  savedLocations = [],
+  locationTrackingEnabled = false,
+  onSaveLocation,
+  customTags = [],
+  onCreateCustomTag,
+  onDeleteCustomTag,
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'kanban' | 'eisenhower'>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [tagFilter, setTagFilter] = useState<string>('all');
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
   const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
   const scheduledReminders = useScheduledReminders();
@@ -107,6 +130,11 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   const [newSubtasks, setNewSubtasks] = useState<{ id: string; title: string; completed: boolean }[]>([]);
   const [draftSubtaskTitle, setDraftSubtaskTitle] = useState('');
   const [newIsUnclassified, setNewIsUnclassified] = useState(false);
+  const [newLocationId, setNewLocationId] = useState<string>('');
+  const [newTags, setNewTags] = useState<string[]>([]);
+  const [draftCustomTagName, setDraftCustomTagName] = useState<string>('');
+  const [draftCustomTagColor, setDraftCustomTagColor] = useState<TaskTagColor>('cyan');
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const [titleError, setTitleError] = useState<string | null>(null);
 
   // Auto-classify state
@@ -181,6 +209,8 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
       energyRequired: taskToRestore.energyRequired,
       subtasks: taskToRestore.subtasks,
       isUnclassified: taskToRestore.isUnclassified,
+      tags: taskToRestore.tags,
+      locationReminder: taskToRestore.locationReminder,
     });
   };
 
@@ -206,6 +236,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
     setNewSubtasks([]);
     setDraftSubtaskTitle('');
     setNewIsUnclassified(false);
+    setNewLocationId('');
+    setNewTags([]);
+    setDraftCustomTagName('');
     setTitleError(null);
     setIsFormOpen((v) => (editingTaskId ? true : !v));
   };
@@ -219,7 +252,37 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
     setNewSubtasks([]);
     setDraftSubtaskTitle('');
     setNewIsUnclassified(false);
+    setNewLocationId('');
+    setNewTags([]);
+    setDraftCustomTagName('');
     setTitleError(null);
+  };
+
+  const toggleFormTag = (tagName: string) => {
+    const clean = normalizeTagName(tagName);
+    if (!clean) return;
+    setNewTags((prev) => {
+      const exists = prev.some((t) => t.toLowerCase() === clean.toLowerCase());
+      if (exists) {
+        return prev.filter((t) => t.toLowerCase() !== clean.toLowerCase());
+      }
+      if (prev.length >= 15) return prev;
+      return [...prev, clean];
+    });
+  };
+
+  const handleCreateAndAssignTag = () => {
+    const clean = normalizeTagName(draftCustomTagName);
+    if (!clean) return;
+    if (onCreateCustomTag) {
+      onCreateCustomTag(clean, draftCustomTagColor);
+    }
+    setNewTags((prev) => {
+      if (prev.some((t) => t.toLowerCase() === clean.toLowerCase())) return prev;
+      if (prev.length >= 15) return prev;
+      return [...prev, clean];
+    });
+    setDraftCustomTagName('');
   };
 
   const handleSaveTask = (e: React.FormEvent) => {
@@ -229,6 +292,21 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
       return;
     }
     setTitleError(null);
+
+    const matchedLocation = newLocationId
+      ? savedLocations.find((loc) => loc.id === newLocationId)
+      : undefined;
+    const builtLocationReminder: TaskLocationReminder | undefined = matchedLocation
+      ? {
+          locationId: matchedLocation.id,
+          locationName: matchedLocation.name,
+          lat: matchedLocation.lat,
+          lng: matchedLocation.lng,
+          radiusMeters: matchedLocation.radiusMeters,
+          enabled: true,
+          triggerOn: 'arrive',
+        }
+      : undefined;
 
     if (editingTaskId) {
       const existing = tasks.find((t) => t.id === editingTaskId);
@@ -247,6 +325,8 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
           isTopPriority: !newIsUnclassified && newPriority === 'high',
           isUnclassified: newIsUnclassified,
           subtasks: newSubtasks,
+          tags: newTags,
+          locationReminder: builtLocationReminder,
           completedAt:
             newStatus === 'completed'
               ? existing.completedAt || new Date().toISOString()
@@ -266,7 +346,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
         energyRequired: newPriority === 'high' ? 'high' : 'medium',
         createdAt: new Date().toISOString(),
         subtasks: newSubtasks,
+        tags: newTags,
         isUnclassified: newIsUnclassified,
+        locationReminder: builtLocationReminder,
       });
     }
 
@@ -321,15 +403,20 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   const tomorrowStr = getTomorrowDateString();
   const tasksWithSuggestions = getSmartReschedulingSuggestions(tasks);
   const normalizedQuery = normalizeSearchText(searchQuery);
+  const availableTags = mergeAvailableTags(tasks, customTags);
 
   const filteredTasks = tasksWithSuggestions
     .filter((task) => {
       const normalizedTitle = normalizeSearchText(task.title);
       const normalizedDesc = task.description ? normalizeSearchText(task.description) : '';
+      const matchesTagQuery = Boolean(
+        task.tags?.some((tg) => normalizeSearchText(tg).includes(normalizedQuery))
+      );
       const matchesSearch =
         !normalizedQuery ||
         normalizedTitle.includes(normalizedQuery) ||
-        normalizedDesc.includes(normalizedQuery);
+        normalizedDesc.includes(normalizedQuery) ||
+        matchesTagQuery;
       const matchesCategory =
         categoryFilter === 'all'
           ? true
@@ -337,7 +424,14 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
           ? Boolean(task.isUnclassified || !task.category || !task.priority)
           : task.category === categoryFilter && !task.isUnclassified;
       const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
-      return matchesSearch && matchesCategory && matchesPriority;
+      const matchesTagFilter =
+        tagFilter === 'all' ||
+        Boolean(
+          task.tags?.some(
+            (tg) => normalizeTagName(tg).toLowerCase() === normalizeTagName(tagFilter).toLowerCase()
+          )
+        );
+      return matchesSearch && matchesCategory && matchesPriority && matchesTagFilter;
     })
     .sort((a, b) => {
       if (!normalizedQuery) return 0;
@@ -583,6 +677,52 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Tag / Label Quick Filter Chips */}
+        {availableTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2.5 border-t border-slate-800/60 text-[11px]">
+            <span className="text-slate-400 font-semibold flex items-center gap-1 ml-1">
+              <Tag className="w-3.5 h-3.5 text-cyan-400" />
+              <span>الوسوم:</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setTagFilter('all')}
+              className={`px-2.5 py-1 rounded-lg border font-semibold transition-all cursor-pointer ${
+                tagFilter === 'all'
+                  ? 'bg-cyan-600 text-white border-cyan-400 shadow-sm'
+                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              الكل ({tasks.length})
+            </button>
+            {availableTags.map((tg) => {
+              const count = tasks.filter((t) =>
+                t.tags?.some((x) => normalizeTagName(x).toLowerCase() === tg.name.toLowerCase())
+              ).length;
+              const style = getTagStyleByColor(tg.color);
+              const isSelected =
+                tagFilter !== 'all' &&
+                normalizeTagName(tagFilter).toLowerCase() === tg.name.toLowerCase();
+              return (
+                <button
+                  key={tg.id}
+                  type="button"
+                  onClick={() => setTagFilter(isSelected ? 'all' : tg.name)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold transition-all cursor-pointer ${
+                    isSelected
+                      ? style.selectedClass
+                      : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${style.dotClass}`} />
+                  <span>{tg.name}</span>
+                  <span className="opacity-70 font-mono text-[10px]">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Manual Task Add / Edit Form */}
@@ -746,6 +886,148 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
               />
             </div>
 
+            {/* Optional Location-Based Reminder Selector */}
+            <div className="space-y-1.5 md:col-span-2 pt-2 border-t border-slate-800/70">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                <span>التذكير عند الوصول لموقع جغرافي (اختياري)</span>
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={newLocationId}
+                  onChange={(e) => setNewLocationId(e.target.value)}
+                  aria-label="اختيار موقع التذكير الجغرافي"
+                  className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="">بدون تذكير جغرافي</option>
+                  {savedLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      عند الوصول إلى: {loc.name} (نطاق {formatDistanceArabic(loc.radiusMeters)})
+                    </option>
+                  ))}
+                </select>
+
+                {onSaveLocation && (
+                  <button
+                    type="button"
+                    onClick={() => setLocationPickerOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>+ إضافة موقع جديد على الخريطة</span>
+                  </button>
+                )}
+              </div>
+              {newLocationId && !locationTrackingEnabled && (
+                <p className="text-[11px] text-amber-300/90">
+                  ملاحظة: فعّل «مراقبة الموقع» من صفحة الإشعارات ليتم تنبيهك تلقائياً فور وصولك لهذا الموقع.
+                </p>
+              )}
+            </div>
+
+            {/* Custom Tags / Labels Section */}
+            <div className="space-y-2 md:col-span-2 pt-2 border-t border-slate-800/70">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>الوسوم والتصنيفات المخصصة (Tags / Labels)</span>
+                </label>
+                {newTags.length > 0 && (
+                  <span className="text-[11px] text-cyan-300 font-medium">
+                    تم تحديد {newTags.length} وسوم
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {mergeAvailableTags(
+                  [...tasks, { id: 'draft', title: '', category: 'work', priority: 'medium', status: 'todo', energyRequired: 'medium', createdAt: '', tags: newTags }],
+                  customTags
+                ).map((tg) => {
+                  const isSelected = newTags.some(
+                    (t) => t.toLowerCase() === tg.name.toLowerCase()
+                  );
+                  const style = getTagStyleByColor(tg.color);
+                  const isSavedInCatalog = customTags.some((c) => c.id === tg.id);
+                  return (
+                    <div
+                      key={tg.id}
+                      className={`inline-flex items-center rounded-lg border text-xs font-semibold transition-all ${
+                        isSelected
+                          ? style.selectedClass
+                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleFormTag(tg.name)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 cursor-pointer"
+                      >
+                        <span className={`w-2 h-2 rounded-full ${style.dotClass}`} />
+                        <span>{tg.name}</span>
+                      </button>
+                      {isSavedInCatalog && onDeleteCustomTag && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteCustomTag(tg.id);
+                            setNewTags((prev) =>
+                              prev.filter((t) => t.toLowerCase() !== tg.name.toLowerCase())
+                            );
+                          }}
+                          className="pl-1.5 pr-1 py-1 opacity-60 hover:opacity-100 hover:text-rose-300 cursor-pointer"
+                          title={`حذف وسم ${tg.name}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  value={draftCustomTagName}
+                  onChange={(e) => setDraftCustomTagName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCreateAndAssignTag();
+                    }
+                  }}
+                  placeholder="أنشئ وسماً جديداً (مثل: دراسة، مشروع التخرج، عائلة)..."
+                  aria-label="اسم الوسم المخصص الجديد"
+                  className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
+                <div className="flex items-center gap-1" role="group" aria-label="لون الوسم">
+                  {TASK_TAG_COLOR_OPTIONS.map((cOpt) => (
+                    <button
+                      key={cOpt.value}
+                      type="button"
+                      onClick={() => setDraftCustomTagColor(cOpt.value)}
+                      className={`w-5 h-5 rounded-full flex items-center justify-center border transition-transform cursor-pointer ${cOpt.dotClass} ${
+                        draftCustomTagColor === cOpt.value
+                          ? 'border-white scale-110 ring-2 ring-cyan-400/50'
+                          : 'border-slate-900 opacity-70 hover:opacity-100'
+                      }`}
+                      title={cOpt.label}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCreateAndAssignTag}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>إضافة وسم</span>
+                </button>
+              </div>
+            </div>
+
             {/* Subtasks inline manager */}
             <div className="space-y-2 md:col-span-2 pt-2 border-t border-slate-800/70">
               <label className="text-xs font-semibold text-slate-300 block">
@@ -885,8 +1167,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                   setSearchQuery('');
                   setCategoryFilter('all');
                   setPriorityFilter('all');
+                  setTagFilter('all');
                 }}
-                className="mt-3 text-xs text-cyan-400 hover:underline"
+                className="mt-3 text-xs text-cyan-400 hover:underline cursor-pointer"
               >
                 إعادة ضبط الفلاتر
               </button>
@@ -942,6 +1225,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     handleQuickPriorityChange(task, nextPriority)
                   }
                   onDelete={() => handleQuickDeleteTask(task)}
+                  savedLocations={savedLocations}
+                  customTags={customTags}
+                  onCreateCustomTag={onCreateCustomTag}
                   wrapperClassName={`rounded-2xl border transition-all duration-200 ${wrapperThemeClass}`}
                   foregroundClassName={foregroundThemeClass}
                 >
@@ -1002,6 +1288,28 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                             </>
                           )}
 
+                          {(task.tags || []).map((tagName) => {
+                            const tagStyle = getTagStyleForName(tagName, customTags);
+                            return (
+                              <button
+                                key={tagName}
+                                type="button"
+                                onClick={() =>
+                                  setTagFilter(
+                                    tagFilter.toLowerCase() === tagName.toLowerCase()
+                                      ? 'all'
+                                      : tagName
+                                  )
+                                }
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-semibold cursor-pointer hover:brightness-110 transition-all ${tagStyle.badgeClass}`}
+                                title={`تصفية حسب وسم: ${tagName}`}
+                              >
+                                <Tag className="w-2.5 h-2.5 shrink-0" />
+                                <span>{tagName}</span>
+                              </button>
+                            );
+                          })}
+
                           {task.estimatedMinutes && (
                             <span className="flex items-center gap-1 text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-md text-[11px]">
                               <Clock className="w-3 h-3 text-cyan-400" />
@@ -1012,6 +1320,19 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                           {task.dueTime && (
                             <span className="flex items-center gap-1 text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md text-[11px] font-mono">
                               الاستحقاق: {task.dueTime}
+                            </span>
+                          )}
+
+                          {task.locationReminder?.enabled && (
+                            <span
+                              className="flex items-center gap-1 text-cyan-200 bg-cyan-950/80 border border-cyan-700/60 px-2 py-0.5 rounded-md text-[11px] font-semibold"
+                              title={`تذكير جغرافي عند الوصول إلى ${task.locationReminder.locationName}`}
+                            >
+                              <MapPin className="w-3 h-3 text-cyan-400 shrink-0" />
+                              <span>
+                                {task.locationReminder.locationName} •{' '}
+                                {formatDistanceArabic(task.locationReminder.radiusMeters)}
+                              </span>
                             </span>
                           )}
 
@@ -1232,6 +1553,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         handleQuickPriorityChange(task, nextPriority)
                       }
                       onDelete={() => handleQuickDeleteTask(task)}
+                      savedLocations={savedLocations}
+                      customTags={customTags}
+                      onCreateCustomTag={onCreateCustomTag}
                       wrapperClassName="rounded-xl border border-slate-800 bg-slate-950"
                       foregroundClassName="bg-slate-950 p-3 space-y-2"
                     >
@@ -1244,6 +1568,28 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                           بدء
                         </button>
                       </div>
+                      {(task.tags?.length || 0) > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {task.tags?.map((tg) => {
+                            const st = getTagStyleForName(tg, customTags);
+                            return (
+                              <span
+                                key={tg}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${st.badgeClass}`}
+                              >
+                                <Tag className="w-2.5 h-2.5" />
+                                {tg}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {task.locationReminder?.enabled && (
+                        <div className="inline-flex items-center gap-1 text-[10px] text-cyan-300 bg-cyan-950/60 border border-cyan-800/50 px-1.5 py-0.5 rounded">
+                          <MapPin className="w-2.5 h-2.5" />
+                          <span>{task.locationReminder.locationName}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between text-[10px]">
                         {getPriorityBadge(task.priority)}
                         <div className="flex items-center gap-2">
@@ -1310,6 +1656,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         handleQuickPriorityChange(task, nextPriority)
                       }
                       onDelete={() => handleQuickDeleteTask(task)}
+                      savedLocations={savedLocations}
+                      customTags={customTags}
+                      onCreateCustomTag={onCreateCustomTag}
                       wrapperClassName="rounded-xl border border-cyan-800/60 bg-slate-950"
                       foregroundClassName="bg-slate-950 p-3 space-y-2"
                     >
@@ -1322,6 +1671,28 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                           إكمال
                         </button>
                       </div>
+                      {(task.tags?.length || 0) > 0 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {task.tags?.map((tg) => {
+                            const st = getTagStyleForName(tg, customTags);
+                            return (
+                              <span
+                                key={tg}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${st.badgeClass}`}
+                              >
+                                <Tag className="w-2.5 h-2.5" />
+                                {tg}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {task.locationReminder?.enabled && (
+                        <div className="inline-flex items-center gap-1 text-[10px] text-cyan-300 bg-cyan-950/60 border border-cyan-800/50 px-1.5 py-0.5 rounded">
+                          <MapPin className="w-2.5 h-2.5" />
+                          <span>{task.locationReminder.locationName}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between text-[10px]">
                         {getPriorityBadge(task.priority)}
                         <div className="flex items-center gap-2">
@@ -1388,6 +1759,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         handleQuickPriorityChange(task, nextPriority)
                       }
                       onDelete={() => handleQuickDeleteTask(task)}
+                      savedLocations={savedLocations}
+                      customTags={customTags}
+                      onCreateCustomTag={onCreateCustomTag}
                       wrapperClassName="rounded-xl border border-slate-800/80 bg-slate-950 opacity-75"
                       foregroundClassName="bg-slate-950 p-3"
                     >
@@ -1513,6 +1887,17 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
         }
         onClose={() => setReminderTarget(null)}
       />
+
+      {onSaveLocation && (
+        <LocationPickerModal
+          isOpen={locationPickerOpen}
+          onClose={() => setLocationPickerOpen(false)}
+          onSave={(loc) => {
+            onSaveLocation(loc);
+            setNewLocationId(loc.id);
+          }}
+        />
+      )}
 
     </div>
   );

@@ -88,6 +88,44 @@ service cloud.firestore {
         && isOptionalString(a, 'eveningCompletedAt', 64);
     }
 
+    function isValidSavedLocationMap(loc) {
+      return loc is map
+        && loc.keys().hasAll(['id', 'name', 'preset', 'lat', 'lng', 'radiusMeters'])
+        && loc.keys().hasOnly(['id', 'name', 'preset', 'lat', 'lng', 'radiusMeters', 'address', 'placeId', 'updatedAt'])
+        && isValidId(loc.id)
+        && loc.name is string && loc.name.size() >= 1 && loc.name.size() <= 120
+        && loc.preset is string && loc.preset in ['home', 'work', 'custom']
+        && (loc.lat is int || loc.lat is float) && loc.lat >= -90 && loc.lat <= 90
+        && (loc.lng is int || loc.lng is float) && loc.lng >= -180 && loc.lng <= 180
+        && (loc.radiusMeters is int || loc.radiusMeters is float) && loc.radiusMeters >= 50 && loc.radiusMeters <= 50000
+        && isOptionalString(loc, 'address', 300)
+        && isOptionalString(loc, 'placeId', 200)
+        && isOptionalString(loc, 'updatedAt', 64);
+    }
+
+    function isValidLocationReminderMap(lr) {
+      return lr is map
+        && lr.keys().hasAll(['locationId', 'locationName', 'lat', 'lng', 'radiusMeters', 'enabled', 'triggerOn'])
+        && lr.keys().hasOnly(['locationId', 'locationName', 'lat', 'lng', 'radiusMeters', 'enabled', 'triggerOn', 'lastTriggeredAt'])
+        && isValidId(lr.locationId)
+        && lr.locationName is string && lr.locationName.size() >= 1 && lr.locationName.size() <= 120
+        && (lr.lat is int || lr.lat is float) && lr.lat >= -90 && lr.lat <= 90
+        && (lr.lng is int || lr.lng is float) && lr.lng >= -180 && lr.lng <= 180
+        && (lr.radiusMeters is int || lr.radiusMeters is float) && lr.radiusMeters >= 50 && lr.radiusMeters <= 50000
+        && lr.enabled is bool
+        && lr.triggerOn is string && lr.triggerOn == 'arrive'
+        && isOptionalString(lr, 'lastTriggeredAt', 64);
+    }
+
+    function isValidCustomTagMap(tag) {
+      return tag is map
+        && tag.keys().hasAll(['id', 'name', 'color'])
+        && tag.keys().hasOnly(['id', 'name', 'color'])
+        && isValidId(tag.id)
+        && tag.name is string && tag.name.size() >= 1 && tag.name.size() <= 40
+        && tag.color is string && tag.color in ['cyan', 'emerald', 'amber', 'rose', 'purple', 'blue'];
+    }
+
     function isValidWorkspace(data, userId) {
       return data.keys().hasAll([
           'ownerId', 'profile', 'dashboardLayout', 'adhkarState',
@@ -96,6 +134,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'ownerId', 'profile', 'dashboardLayout', 'adhkarState',
+          'savedLocations', 'locationTrackingEnabled', 'customTags',
           'quranNotificationsEnabled', 'pushEnabled', 'soundEnabled', 'autoDndEnabled',
           'createdAt', 'updatedAt'
         ])
@@ -104,6 +143,17 @@ service cloud.firestore {
         && data.dashboardLayout is list && data.dashboardLayout.size() <= 60
         && (data.dashboardLayout.size() == 0 || (data.dashboardLayout[0] is map && data.dashboardLayout[0].keys().hasAll(['id', 'visible'])))
         && isValidAdhkarMap(data.adhkarState)
+        && (!('savedLocations' in data) || (
+          data.savedLocations is list
+          && data.savedLocations.size() <= 25
+          && (data.savedLocations.size() == 0 || isValidSavedLocationMap(data.savedLocations[0]))
+        ))
+        && isOptionalBool(data, 'locationTrackingEnabled')
+        && (!('customTags' in data) || (
+          data.customTags is list
+          && data.customTags.size() <= 30
+          && (data.customTags.size() == 0 || isValidCustomTagMap(data.customTags[0]))
+        ))
         && data.quranNotificationsEnabled is bool
         && data.pushEnabled is bool
         && data.soundEnabled is bool
@@ -119,9 +169,9 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'id', 'ownerId', 'title', 'description', 'category', 'priority', 'status',
-          'estimatedMinutes', 'dueDate', 'dueTime', 'energyRequired', 'subtasks',
+          'estimatedMinutes', 'dueDate', 'dueTime', 'energyRequired', 'subtasks', 'tags',
           'isTopPriority', 'isUnclassified', 'clientCreatedAt', 'completedAt', 'goalId',
-          'createdAt', 'updatedAt'
+          'locationReminder', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id) && data.id == taskId
         && isValidId(data.ownerId) && data.ownerId == userId && data.ownerId == request.auth.uid
@@ -135,11 +185,17 @@ service cloud.firestore {
         && isOptionalString(data, 'dueTime', 16)
         && data.energyRequired is string && data.energyRequired in ['high', 'medium', 'low']
         && (!('subtasks' in data) || (data.subtasks is list && data.subtasks.size() <= 50 && (data.subtasks.size() == 0 || data.subtasks[0] is map)))
+        && (!('tags' in data) || (
+          data.tags is list
+          && data.tags.size() <= 15
+          && (data.tags.size() == 0 || (data.tags[0] is string && data.tags[0].size() >= 1 && data.tags[0].size() <= 40))
+        ))
         && isOptionalBool(data, 'isTopPriority')
         && isOptionalBool(data, 'isUnclassified')
         && data.clientCreatedAt is string && data.clientCreatedAt.size() <= 64
         && isOptionalString(data, 'completedAt', 64)
         && isOptionalString(data, 'goalId', 128)
+        && (!('locationReminder' in data) || isValidLocationReminderMap(data.locationReminder))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -268,12 +324,16 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['profile', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['dashboardLayout', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['adhkarState', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['savedLocations', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['locationTrackingEnabled', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['customTags', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['quranNotificationsEnabled', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['pushEnabled', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['soundEnabled', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['autoDndEnabled', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly([
             'profile', 'dashboardLayout', 'adhkarState',
+            'savedLocations', 'locationTrackingEnabled', 'customTags',
             'quranNotificationsEnabled', 'pushEnabled', 'soundEnabled', 'autoDndEnabled',
             'updatedAt'
           ])
@@ -300,10 +360,13 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['subtasks', 'status', 'completedAt', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'isTopPriority', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['locationReminder', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['tags', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly([
               'title', 'description', 'category', 'priority', 'status',
               'estimatedMinutes', 'dueDate', 'dueTime', 'energyRequired',
-              'subtasks', 'isTopPriority', 'isUnclassified', 'completedAt', 'goalId', 'updatedAt'
+              'subtasks', 'tags', 'isTopPriority', 'isUnclassified', 'completedAt', 'goalId',
+              'locationReminder', 'updatedAt'
             ])
           );
         allow delete: if isOwner(userId) && isValidId(taskId);

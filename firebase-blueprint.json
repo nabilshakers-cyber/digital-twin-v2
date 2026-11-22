@@ -24,6 +24,18 @@
           "type": "object",
           "description": "Daily morning and evening Adhkar completion state."
         },
+        "savedLocations": {
+          "type": "array",
+          "description": "Bounded user-saved geofenced locations (home, work, custom, max 25 items) with lat, lng, radiusMeters, and optional address/placeId."
+        },
+        "locationTrackingEnabled": {
+          "type": "boolean",
+          "description": "Explicit opt-in user consent flag for location-based arrival reminders."
+        },
+        "customTags": {
+          "type": "array",
+          "description": "Bounded catalog of user-defined custom task tags/labels (max 30 items, each with id, name, and color)."
+        },
         "quranNotificationsEnabled": {
           "type": "boolean"
         },
@@ -136,6 +148,14 @@
         "goalId": {
           "type": "string",
           "maxLength": 128
+        },
+        "locationReminder": {
+          "type": "object",
+          "description": "Optional geofenced arrival reminder configuration linked to a saved location."
+        },
+        "tags": {
+          "type": "array",
+          "description": "Optional list of custom tag/label names assigned to the task (max 15 strings, max 40 chars each)."
         },
         "createdAt": {
           "type": "string",

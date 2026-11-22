@@ -115,6 +115,10 @@ async function generateContentSmart(label, params, primaryTimeoutMs = 8e3, fallb
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
 });
+app.get("/api/maps-config", (_req, res) => {
+  const apiKey = (process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "").trim();
+  res.json({ apiKey });
+});
 app.post("/api/twin/chat", async (req, res) => {
   try {
     const { message, history, profile, tasks, schedule, context } = req.body;

@@ -119,6 +119,16 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Runtime Google Maps Platform config (reads provisioned env var if not exposed via VITE_ at build time)
+app.get("/api/maps-config", (_req, res) => {
+  const apiKey = (
+    process.env.VITE_GOOGLE_MAPS_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    ""
+  ).trim();
+  res.json({ apiKey });
+});
+
 // Digital Twin Chat & Guidance
 app.post("/api/twin/chat", async (req, res) => {
   try {

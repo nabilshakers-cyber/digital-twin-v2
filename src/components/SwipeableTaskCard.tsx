@@ -5,10 +5,23 @@ import {
   Edit3,
   Flame,
   Layers,
+  Plus,
+  Tag,
   Trash2,
   X,
+  MapPin,
 } from 'lucide-react';
-import { Priority, Task, TaskCategory, TaskStatus } from '../types';
+import {
+  Priority,
+  SavedLocation,
+  Task,
+  TaskCategory,
+  TaskStatus,
+  TaskLocationReminder,
+  TaskTag,
+  TaskTagColor,
+} from '../types';
+import { getTagStyleForName, mergeAvailableTags, normalizeTagName } from '../utils/taskTags';
 
 export type SwipeOpenSide = 'left' | 'right';
 
@@ -25,6 +38,9 @@ interface SwipeableTaskCardProps {
   onChangePriority: (priority: Priority) => void;
   onDelete: () => void;
   compact?: boolean;
+  savedLocations?: SavedLocation[];
+  customTags?: TaskTag[];
+  onCreateCustomTag?: (name: string, color?: TaskTagColor) => TaskTag | null;
   wrapperClassName: string;
   foregroundClassName?: string;
   children: React.ReactNode;
@@ -92,6 +108,9 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
   onChangePriority,
   onDelete,
   compact = false,
+  savedLocations = [],
+  customTags = [],
+  onCreateCustomTag,
   wrapperClassName,
   foregroundClassName = '',
   children,
@@ -107,6 +126,11 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
   const [draftMinutes, setDraftMinutes] = useState<number>(task.estimatedMinutes || 30);
   const [draftDueDate, setDraftDueDate] = useState<string>(task.dueDate || '');
   const [draftDueTime, setDraftDueTime] = useState<string>(task.dueTime || '');
+  const [draftLocationId, setDraftLocationId] = useState<string>(
+    task.locationReminder?.enabled ? task.locationReminder.locationId : ''
+  );
+  const [draftTags, setDraftTags] = useState<string[]>(task.tags || []);
+  const [inlineNewTag, setInlineNewTag] = useState<string>('');
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -119,9 +143,41 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
       setDraftMinutes(task.estimatedMinutes || 30);
       setDraftDueDate(task.dueDate || '');
       setDraftDueTime(task.dueTime || '');
+      setDraftLocationId(
+        task.locationReminder?.enabled ? task.locationReminder.locationId : ''
+      );
+      setDraftTags(task.tags || []);
+      setInlineNewTag('');
       setInlineError(null);
     }
   }, [isEditingInline, task]);
+
+  const toggleDraftTag = (tagName: string) => {
+    const clean = normalizeTagName(tagName);
+    if (!clean) return;
+    setDraftTags((prev) => {
+      const exists = prev.some((t) => t.toLowerCase() === clean.toLowerCase());
+      if (exists) {
+        return prev.filter((t) => t.toLowerCase() !== clean.toLowerCase());
+      }
+      if (prev.length >= 15) return prev;
+      return [...prev, clean];
+    });
+  };
+
+  const handleAddInlineTag = () => {
+    const clean = normalizeTagName(inlineNewTag);
+    if (!clean) return;
+    if (onCreateCustomTag) {
+      onCreateCustomTag(clean);
+    }
+    setDraftTags((prev) => {
+      if (prev.some((t) => t.toLowerCase() === clean.toLowerCase())) return prev;
+      if (prev.length >= 15) return prev;
+      return [...prev, clean];
+    });
+    setInlineNewTag('');
+  };
 
   const gestureRef = useRef<{
     active: boolean;
@@ -347,6 +403,29 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
       return;
     }
     setInlineError(null);
+
+    let nextLocationReminder: TaskLocationReminder | undefined;
+    if (draftLocationId) {
+      const matched = savedLocations.find((loc) => loc.id === draftLocationId);
+      if (matched) {
+        nextLocationReminder = {
+          locationId: matched.id,
+          locationName: matched.name,
+          lat: matched.lat,
+          lng: matched.lng,
+          radiusMeters: matched.radiusMeters,
+          enabled: true,
+          triggerOn: 'arrive',
+          lastTriggeredAt: task.locationReminder?.lastTriggeredAt,
+        };
+      } else if (task.locationReminder && task.locationReminder.locationId === draftLocationId) {
+        nextLocationReminder = {
+          ...task.locationReminder,
+          enabled: true,
+        };
+      }
+    }
+
     onSaveInlineEdit({
       ...task,
       title: draftTitle.trim(),
@@ -361,6 +440,8 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
         draftPriority === 'high' ? 'high' : draftPriority === 'low' ? 'low' : 'medium',
       isTopPriority: !task.isUnclassified && draftPriority === 'high',
       isUnclassified: false,
+      tags: draftTags,
+      locationReminder: nextLocationReminder,
       completedAt:
         draftStatus === 'completed'
           ? task.completedAt || new Date().toISOString()
@@ -609,17 +690,101 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
             </div>
 
             {!compact && (
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-slate-400 shrink-0">التاريخ:</label>
-                <input
-                  type="date"
-                  value={draftDueDate}
-                  onChange={(e) => setDraftDueDate(e.target.value)}
-                  aria-label="تاريخ الاستحقاق"
-                  className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-cyan-500"
-                />
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] text-slate-400 shrink-0">التاريخ:</label>
+                  <input
+                    type="date"
+                    value={draftDueDate}
+                    onChange={(e) => setDraftDueDate(e.target.value)}
+                    aria-label="تاريخ الاستحقاق"
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                {(savedLocations.length > 0 || task.locationReminder) && (
+                  <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                    <MapPin className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <select
+                      value={draftLocationId}
+                      onChange={(e) => setDraftLocationId(e.target.value)}
+                      aria-label="تذكير الموقع الجغرافي"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="">بدون تذكير موقع</option>
+                      {savedLocations.map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          عند الوصول إلى: {loc.name} ({loc.radiusMeters}م)
+                        </option>
+                      ))}
+                      {task.locationReminder &&
+                        !savedLocations.some((l) => l.id === task.locationReminder?.locationId) && (
+                          <option value={task.locationReminder.locationId}>
+                            عند الوصول إلى: {task.locationReminder.locationName} (
+                            {task.locationReminder.radiusMeters}م)
+                          </option>
+                        )}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Inline Tags Selector */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1">
+                  <Tag className="w-3 h-3 text-cyan-400" />
+                  <span>الوسوم:</span>
+                </span>
+                {mergeAvailableTags([{ ...task, tags: draftTags }], customTags).map((tagOpt) => {
+                  const selected = draftTags.some(
+                    (t) => t.toLowerCase() === tagOpt.name.toLowerCase()
+                  );
+                  const style = getTagStyleForName(tagOpt.name, customTags);
+                  return (
+                    <button
+                      key={tagOpt.id}
+                      type="button"
+                      onClick={() => toggleDraftTag(tagOpt.name)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-semibold transition-all cursor-pointer ${
+                        selected
+                          ? style.selectedClass
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${style.dotClass}`} />
+                      <span>{tagOpt.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={inlineNewTag}
+                  onChange={(e) => setInlineNewTag(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddInlineTag();
+                    }
+                  }}
+                  placeholder="وسم مخصص جديد..."
+                  aria-label="إضافة وسم جديد"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddInlineTag}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-[11px] font-semibold cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>إضافة</span>
+                </button>
+              </div>
+            </div>
 
             <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-800/80">
               <button

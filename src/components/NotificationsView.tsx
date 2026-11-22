@@ -21,10 +21,19 @@ import {
   Trash2,
   BookOpen,
   Repeat,
+  MapPin,
+  Home,
+  Briefcase,
+  Navigation,
+  Plus,
+  Edit3,
+  Play,
+  Loader2,
 } from 'lucide-react';
 import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
-import { Task } from '../types';
+import { SavedLocation, SavedLocationPreset, Task } from '../types';
+import { formatDistanceArabic, GeoCoordinates } from '../utils/geofencing';
 import {
   cancelReminder,
   NOTIFICATION_DENIED_ALERT_MESSAGE,
@@ -32,6 +41,7 @@ import {
   useScheduledReminders,
 } from '../utils/localNotifications';
 import { CategoryTonesCustomizer } from './CategoryTonesCustomizer';
+import { LocationPickerModal } from './LocationPickerModal';
 
 interface NotificationsViewProps {
   reminders: SmartReminder[];
@@ -55,6 +65,18 @@ interface NotificationsViewProps {
   onRebalanceWithTwin?: (analysis: TomorrowEnergyAnalysis) => void;
   onCheckTomorrowEnergy?: () => void;
   onBackToDashboard: () => void;
+  savedLocations: SavedLocation[];
+  tasks: Task[];
+  locationTrackingEnabled: boolean;
+  onToggleLocationTracking: () => void;
+  onSaveLocation: (loc: SavedLocation) => void;
+  onDeleteLocation: (locationId: string) => void;
+  onCheckLocationNow: () => void;
+  onSimulateArrival: (loc: SavedLocation) => void;
+  currentGeoCoords?: GeoCoordinates | null;
+  geoDistances?: Record<string, number>;
+  geoError?: string | null;
+  geoChecking?: boolean;
 }
 
 const CATEGORY_LABEL: Record<ScheduledLocalReminder['category'], string> = {
@@ -91,8 +113,23 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
   onRebalanceWithTwin,
   onCheckTomorrowEnergy,
   onBackToDashboard,
+  savedLocations,
+  tasks,
+  locationTrackingEnabled,
+  onToggleLocationTracking,
+  onSaveLocation,
+  onDeleteLocation,
+  onCheckLocationNow,
+  onSimulateArrival,
+  currentGeoCoords,
+  geoDistances = {},
+  geoError,
+  geoChecking = false,
 }) => {
   const scheduledMap = useScheduledReminders();
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [editingLocation, setEditingLocation] = React.useState<SavedLocation | null>(null);
+  const [pickerPreset, setPickerPreset] = React.useState<SavedLocationPreset>('work');
 
   const scheduledList = useMemo(() => {
     const items = Object.values(scheduledMap) as ScheduledLocalReminder[];
@@ -335,11 +372,15 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                 const isGentle = rem.urgency === 'gentle' || rem.sourceType === 'adhkar';
                 const isEnergyWarning =
                   rem.urgency === 'energy_warning' || rem.sourceType === 'energy_overload';
+                const isLocationArrival =
+                  rem.urgency === 'location_arrival' || rem.sourceType === 'location';
                 return (
                   <div
                     key={rem.id}
                     className={`rounded-2xl border p-4 space-y-3 transition-all ${
-                      isEnergyWarning
+                      isLocationArrival
+                        ? 'bg-cyan-950/30 border-cyan-500/60'
+                        : isEnergyWarning
                         ? 'bg-amber-950/30 border-amber-500/60'
                         : isGentle
                         ? 'bg-emerald-950/25 border-emerald-700/50'
@@ -350,7 +391,9 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-2.5 min-w-0">
-                        {isEnergyWarning ? (
+                        {isLocationArrival ? (
+                          <MapPin className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                        ) : isEnergyWarning ? (
                           <BatteryCharging className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                         ) : isGentle ? (
                           <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -371,7 +414,9 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                           )}
                           <span
                             className={`inline-block mt-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-lg ${
-                              isEnergyWarning
+                              isLocationArrival
+                                ? 'bg-cyan-950 text-cyan-200 border border-cyan-700/70'
+                                : isEnergyWarning
                                 ? 'bg-amber-950 text-amber-300 border border-amber-700/70'
                                 : isGentle
                                 ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/70'
@@ -532,10 +577,261 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
         </aside>
       </div>
 
+      {/* Location-Based Geofencing Reminders Section */}
+      <section className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4 shadow-xl">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/40 flex items-center justify-center text-cyan-300 shrink-0">
+              <MapPin className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-100">
+                التذكيرات الجغرافية (المواقع المحفوظة)
+              </h3>
+              <p className="text-xs text-slate-400">
+                استقبل تنبيهاً تلقائياً عند وصولك لموقع محدد (مثل العمل أو المنزل) بالمهام المرتبطة به.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingLocation(null);
+                setPickerPreset('work');
+                setPickerOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow cursor-pointer transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>إضافة موقع جديد على الخريطة</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Opt-in Tracking Consent & Live GPS Controls */}
+        <div className="rounded-xl bg-slate-950/70 border border-slate-800/90 p-3.5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Navigation
+                className={`w-4 h-4 shrink-0 ${
+                  locationTrackingEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-400'
+                }`}
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-200">
+                  تفعيل مراقبة الموقع للتنبيه عند الوصول
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {locationTrackingEnabled
+                    ? currentGeoCoords
+                      ? `التتبع نشط • آخر قراءة: ${currentGeoCoords.lat.toFixed(4)}, ${currentGeoCoords.lng.toFixed(4)}`
+                      : 'التتبع نشط — في انتظار قراءة إحداثيات GPS من الجهاز'
+                    : 'متوقف حالياً (يتطلب موافقتك الصريحة للبدء ويمكنك إيقافه في أي وقت)'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onToggleLocationTracking}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer ${
+                  locationTrackingEnabled
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                }`}
+              >
+                {locationTrackingEnabled ? 'المراقبة مفعلة (إيقاف)' : 'تفعيل المراقبة'}
+              </button>
+
+              <button
+                type="button"
+                onClick={onCheckLocationNow}
+                disabled={geoChecking}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                {geoChecking ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Navigation className="w-3.5 h-3.5" />
+                )}
+                <span>فحص الموقع الآن</span>
+              </button>
+            </div>
+          </div>
+
+          {geoError && (
+            <div
+              role="alert"
+              className="px-3 py-2 rounded-lg bg-amber-950/50 border border-amber-700/60 text-[11px] text-amber-200"
+            >
+              {geoError}
+            </div>
+          )}
+
+          <div className="flex items-start gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/70">
+            <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+            <span>
+              خصوصيتك محفوظة: لا يتم فحص الموقع في الخلفية إلا بعد تفعيلك للمفتاح أعلاه، وتُستخدم الإحداثيات فقط لمطابقة نطاق المهام المرتبطة بمواقعك المحفوظة.
+            </span>
+          </div>
+        </div>
+
+        {/* Saved Locations List */}
+        {savedLocations.length === 0 ? (
+          <div className="py-8 text-center space-y-3 bg-slate-950/40 rounded-2xl border border-slate-800/60 p-4">
+            <MapPin className="w-8 h-8 text-slate-500 mx-auto" />
+            <p className="text-xs font-bold text-slate-300">لا توجد مواقع محفوظة بعد</p>
+            <p className="text-[11px] text-slate-400 max-w-md mx-auto">
+              أضف مواقعك المتكررة مثل المنزل أو العمل ثم اربط مهامك بها ليتم تذكيرك فور وصولك.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingLocation(null);
+                  setPickerPreset('home');
+                  setPickerOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>+ إضافة المنزل</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingLocation(null);
+                  setPickerPreset('work');
+                  setPickerOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
+              >
+                <Briefcase className="w-3.5 h-3.5" />
+                <span>+ إضافة العمل</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {savedLocations.map((loc) => {
+              const linkedActiveCount = tasks.filter(
+                (t) =>
+                  t.status !== 'completed' &&
+                  t.locationReminder?.enabled &&
+                  t.locationReminder.locationId === loc.id
+              ).length;
+              const liveDistance = geoDistances[loc.id];
+              const isInside =
+                typeof liveDistance === 'number' && liveDistance <= loc.radiusMeters;
+
+              return (
+                <div
+                  key={loc.id}
+                  className={`p-4 rounded-2xl border space-y-3 transition-all ${
+                    isInside
+                      ? 'bg-cyan-950/25 border-cyan-500/60'
+                      : 'bg-slate-950/70 border-slate-800/90'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-cyan-300 shrink-0">
+                        {loc.preset === 'home' ? (
+                          <Home className="w-4 h-4" />
+                        ) : loc.preset === 'work' ? (
+                          <Briefcase className="w-4 h-4" />
+                        ) : (
+                          <MapPin className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <h4 className="text-sm font-bold text-slate-100 truncate">{loc.name}</h4>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 border border-slate-700">
+                            نطاق {formatDistanceArabic(loc.radiusMeters)}
+                          </span>
+                          {isInside && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              أنت داخل النطاق الآن
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                          {loc.address || `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingLocation(loc);
+                          setPickerPreset(loc.preset || 'custom');
+                          setPickerOpen(true);
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-800 cursor-pointer"
+                        title="تعديل الموقع على الخريطة"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteLocation(loc.id)}
+                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800 cursor-pointer"
+                        title="حذف الموقع"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/70 text-[11px]">
+                    <div className="flex flex-wrap items-center gap-2 text-slate-400">
+                      <span>
+                        المهام المرتبطة:{' '}
+                        <strong className="text-slate-200">{linkedActiveCount}</strong>
+                      </span>
+                      {typeof liveDistance === 'number' && (
+                        <span>• البعد الحالي: {formatDistanceArabic(liveDistance)}</span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => onSimulateArrival(loc)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/80 hover:bg-cyan-600 text-cyan-300 hover:text-white border border-cyan-700/60 font-semibold transition-colors cursor-pointer"
+                      title="اختبار ظهور تنبيه الوصول لهذا الموقع فوراً"
+                    >
+                      <Play className="w-3 h-3" />
+                      <span>محاكاة الوصول (تجربة)</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* Category Alert Tones Customization Section */}
       <CategoryTonesCustomizer
         soundEnabled={soundEnabled}
         onEnableSound={soundEnabled ? undefined : onToggleSound}
+      />
+
+      <LocationPickerModal
+        isOpen={pickerOpen}
+        onClose={() => {
+          setPickerOpen(false);
+          setEditingLocation(null);
+        }}
+        initialLocation={editingLocation}
+        initialPreset={pickerPreset}
+        onSave={onSaveLocation}
       />
     </div>
   );

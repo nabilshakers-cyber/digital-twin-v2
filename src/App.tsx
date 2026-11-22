@@ -18,8 +18,12 @@ import {
   DashboardLayoutEntry,
   CustomDashboardWidget,
   PhoneAppList,
-  PhoneAppShortcut
+  PhoneAppShortcut,
+  SavedLocation,
+  TaskTag,
+  TaskTagColor
 } from './types';
+import { DEFAULT_TASK_TAGS, normalizeTagName } from './utils/taskTags';
 import { DEFAULT_DASHBOARD_LAYOUT, INITIAL_PHONE_APP_LISTS } from './data/dashboardDefaults';
 import { normalizeLegacyPhoneAppIcon } from './components/PhoneAppIcon';
 import { Navbar, type AppNavTab } from './components/Navbar';
@@ -50,7 +54,16 @@ import {
   NOTIFICATION_DENIED_ALERT_MESSAGE,
   NOTIFICATION_DENIED_EVENT,
   requestLocalNotificationPermissions,
+  sendLocationArrivalNotification,
 } from './utils/localNotifications';
+import {
+  buildSimulatedLocationMatches,
+  evaluateGeofenceArrivals,
+  formatGeolocationErrorArabic,
+  GeoCoordinates,
+  isGeolocationSupported,
+  requestCurrentCoordinates,
+} from './utils/geofencing';
 import { onAuthStateChanged } from 'firebase/auth';
 import { AuthScreen } from './components/AuthScreen';
 import { OnboardingScreen } from './components/OnboardingScreen';
@@ -92,6 +105,7 @@ import {
 } from './utils/firestoreSync';
 import {
   ADHKAR_STORAGE_KEY,
+  buildLocationArrivalReminders,
   buildTomorrowEnergyAlertReminder,
   computeNextAdhkarState,
   generateSmartReminders,
@@ -123,6 +137,9 @@ const STORAGE_KEYS = {
   DASHBOARD_LAYOUT: 'digital_twin_dashboard_layout_v1',
   CUSTOM_WIDGETS: 'digital_twin_custom_widgets_v1',
   PHONE_APP_LISTS: 'digital_twin_phone_app_lists_v1',
+  SAVED_LOCATIONS: 'digital_twin_saved_locations_v1',
+  LOCATION_TRACKING: 'digital_twin_location_tracking_v1',
+  CUSTOM_TAGS: 'digital_twin_custom_tags_v1',
   TWIN_TOP_MIGRATED: 'digital_twin_twin_top_migrated_v1',
   TWIN_TOP_CLOUD_MIGRATED: 'digital_twin_twin_top_cloud_migrated_v1',
 };
@@ -312,6 +329,38 @@ export default function App() {
     }
   });
 
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SAVED_LOCATIONS);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Explicit, revocable opt-in consent for location monitoring (default: false)
+  const [locationTrackingEnabled, setLocationTrackingEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.LOCATION_TRACKING);
+      return saved !== null ? JSON.parse(saved) === true : false;
+    } catch {
+      return false;
+    }
+  });
+
+  const [customTags, setCustomTags] = useState<TaskTag[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CUSTOM_TAGS);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) ? parsed : DEFAULT_TASK_TAGS;
+    } catch {
+      return DEFAULT_TASK_TAGS;
+    }
+  });
+
+  const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
+
   // 2. Navigation Tab state (synced with URL hash routes e.g. #/notifications)
   const parseTabFromHash = (): AppNavTab => {
     if (typeof window === 'undefined') return 'dashboard';
@@ -422,6 +471,25 @@ export default function App() {
   const isDndActive = manualDnd || (autoDndEnabled && isFocusSessionRunning);
   const notifiedIdsRef = React.useRef<Set<string>>(new Set());
 
+  // 5.5 Location-Based Geofencing Reminders State
+  const [locationReminders, setLocationReminders] = useState<SmartReminder[]>([]);
+  const [currentGeoCoords, setCurrentGeoCoords] = useState<GeoCoordinates | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [geoChecking, setGeoChecking] = useState(false);
+  const [geoDistances, setGeoDistances] = useState<Record<string, number>>({});
+  const insideLocationIdsRef = React.useRef<Set<string>>(new Set());
+  const locationCooldownRef = React.useRef<Record<string, number>>({});
+  const tasksRef = React.useRef(tasks);
+  tasksRef.current = tasks;
+  const savedLocationsRef = React.useRef(savedLocations);
+  savedLocationsRef.current = savedLocations;
+  const isDndActiveRef = React.useRef(isDndActive);
+  isDndActiveRef.current = isDndActive;
+  const pushEnabledRef = React.useRef(pushEnabled);
+  pushEnabledRef.current = pushEnabled;
+  const soundEnabledRef = React.useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
+
   // Sync to LocalStorage
   useEffect(() => {
     try {
@@ -488,6 +556,39 @@ export default function App() {
     }
   }, [autoDndEnabled]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.SAVED_LOCATIONS, JSON.stringify(savedLocations));
+    } catch {
+      // ignore
+    }
+  }, [savedLocations]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.LOCATION_TRACKING,
+        JSON.stringify(locationTrackingEnabled)
+      );
+    } catch {
+      // ignore
+    }
+  }, [locationTrackingEnabled]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CUSTOM_TAGS, JSON.stringify(customTags));
+    } catch {
+      // ignore
+    }
+  }, [customTags]);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setMapsQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
+
   // Keep latest local snapshot ref for initial cloud workspace migration
   const latestSnapshotRef = React.useRef<LocalWorkspaceSnapshot>({
     profile,
@@ -499,6 +600,9 @@ export default function App() {
     customWidgets,
     dashboardLayout,
     phoneAppLists,
+    savedLocations,
+    locationTrackingEnabled,
+    customTags,
     quranNotificationsEnabled,
     pushEnabled,
     soundEnabled,
@@ -515,6 +619,9 @@ export default function App() {
     customWidgets,
     dashboardLayout,
     phoneAppLists,
+    savedLocations,
+    locationTrackingEnabled,
+    customTags,
     quranNotificationsEnabled,
     pushEnabled,
     soundEnabled,
@@ -570,6 +677,13 @@ export default function App() {
               }
             }
             if (ws.adhkarState) setAdhkarState(ws.adhkarState);
+            if (Array.isArray(ws.savedLocations)) setSavedLocations(ws.savedLocations);
+            if (typeof ws.locationTrackingEnabled === 'boolean') {
+              setLocationTrackingEnabled(ws.locationTrackingEnabled);
+            }
+            if (Array.isArray(ws.customTags)) {
+              setCustomTags(ws.customTags);
+            }
             if (typeof ws.quranNotificationsEnabled === 'boolean') {
               setQuranNotificationsEnabled(ws.quranNotificationsEnabled);
             }
@@ -752,6 +866,9 @@ export default function App() {
         localStorage.removeItem(STORAGE_KEYS.CUSTOM_WIDGETS);
         localStorage.removeItem(STORAGE_KEYS.DASHBOARD_LAYOUT);
         localStorage.removeItem(STORAGE_KEYS.PHONE_APP_LISTS);
+        localStorage.removeItem(STORAGE_KEYS.SAVED_LOCATIONS);
+        localStorage.removeItem(STORAGE_KEYS.LOCATION_TRACKING);
+        localStorage.removeItem(STORAGE_KEYS.CUSTOM_TAGS);
         localStorage.removeItem(ADHKAR_STORAGE_KEY);
       } catch {
         // ignore storage cleanup errors
@@ -764,6 +881,15 @@ export default function App() {
       setCustomWidgets([]);
       setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
       setPhoneAppLists(INITIAL_PHONE_APP_LISTS);
+      setSavedLocations([]);
+      setLocationTrackingEnabled(false);
+      setCustomTags(DEFAULT_TASK_TAGS);
+      setLocationReminders([]);
+      setCurrentGeoCoords(null);
+      setGeoError(null);
+      setGeoDistances({});
+      insideLocationIdsRef.current = new Set();
+      locationCooldownRef.current = {};
       setAdhkarState(loadInitialAdhkarState());
     } finally {
       setAuthLoading(false);
@@ -851,6 +977,28 @@ export default function App() {
     [tasks, schedule, snoozedMap, dismissedIds, nowTick, adhkarState, quranNotificationsEnabled, profile]
   );
 
+  const activeLocationReminders = React.useMemo(() => {
+    const nowMs = Date.now();
+    const incompleteTaskIds = new Set(
+      tasks.filter((t) => t.status !== 'completed').map((t) => t.id)
+    );
+    return locationReminders.filter((rem) => {
+      if (dismissedIds.has(rem.id)) return false;
+      const snoozeUntil = snoozedMap[rem.id];
+      if (snoozeUntil && snoozeUntil > nowMs) return false;
+      if (rem.task && !incompleteTaskIds.has(rem.task.id)) return false;
+      return true;
+    });
+  }, [locationReminders, tasks, dismissedIds, snoozedMap]);
+
+  const allReminders = React.useMemo(
+    () =>
+      [...activeLocationReminders, ...smartReminders].sort(
+        (a, b) => b.priorityScore - a.priorityScore
+      ),
+    [activeLocationReminders, smartReminders]
+  );
+
   // Trigger browser push notification & subtle chime for newly surfaced urgent reminders (suppressed in DND)
   useEffect(() => {
     if (isDndActive) return;
@@ -889,9 +1037,115 @@ export default function App() {
 
   const visibleToasts = React.useMemo(() => {
     if (isDndActive) return [];
-    const activeAutoToasts = smartReminders.filter((r) => !dismissedToastIds.has(r.id));
+    const activeAutoToasts = allReminders.filter((r) => !dismissedToastIds.has(r.id));
     return [...testToasts, ...activeAutoToasts];
-  }, [smartReminders, dismissedToastIds, testToasts, isDndActive]);
+  }, [allReminders, dismissedToastIds, testToasts, isDndActive]);
+
+  // Evaluate GPS coordinates against geofenced saved locations & incomplete tasks
+  const processGeoCoords = React.useCallback((coords: GeoCoordinates) => {
+    const {
+      newMatches,
+      nextInsideLocationIds,
+      nextCooldownMap,
+      locationDistances,
+    } = evaluateGeofenceArrivals({
+      coords,
+      tasks: tasksRef.current,
+      savedLocations: savedLocationsRef.current,
+      insideLocationIds: insideLocationIdsRef.current,
+      cooldownMap: locationCooldownRef.current,
+    });
+
+    insideLocationIdsRef.current = nextInsideLocationIds;
+    locationCooldownRef.current = nextCooldownMap;
+    setCurrentGeoCoords(coords);
+    setGeoDistances(locationDistances);
+    setGeoError(null);
+
+    if (newMatches.length > 0) {
+      const generated = buildLocationArrivalReminders(newMatches);
+      setLocationReminders((prev) => {
+        const map = new Map<string, SmartReminder>();
+        for (const item of generated) map.set(item.id, item);
+        for (const existing of prev) {
+          if (!map.has(existing.id)) map.set(existing.id, existing);
+        }
+        return Array.from(map.values());
+      });
+      setDismissedToastIds((prev) => {
+        const next = new Set(prev);
+        for (const g of generated) next.delete(g.id);
+        return next;
+      });
+
+      if (!isDndActiveRef.current) {
+        const primary = generated[0];
+        if (soundEnabledRef.current) {
+          playToneForReminder(primary);
+        }
+        if (pushEnabledRef.current) {
+          void sendLocationArrivalNotification(
+            `📍 تذكير موقع: ${primary.locationName || 'وصلت إلى الموقع'}`,
+            `${primary.title} — ${primary.timeLabel}`,
+            primary.id
+          );
+        }
+      }
+    }
+  }, []);
+
+  // Recompute distances when savedLocations changes if coords are known
+  useEffect(() => {
+    if (!currentGeoCoords || !locationTrackingEnabled) return;
+    processGeoCoords(currentGeoCoords);
+  }, [savedLocations, currentGeoCoords, locationTrackingEnabled, processGeoCoords]);
+
+  // Opt-in real-time geolocation watcher (only runs when user explicitly enables locationTrackingEnabled)
+  useEffect(() => {
+    if (
+      !authReady ||
+      !authUser?.emailVerified ||
+      !hasCompletedOnboarding ||
+      !locationTrackingEnabled
+    ) {
+      setGeoError(null);
+      return;
+    }
+
+    if (!isGeolocationSupported()) {
+      setGeoError('المتصفح أو الجهاز لا يدعم خدمة تحديد الموقع الجغرافي.');
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        processGeoCoords({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: pos.timestamp,
+        });
+      },
+      (err) => {
+        setGeoError(formatGeolocationErrorArabic(err));
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 20000,
+        timeout: 15000,
+      }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [
+    authReady,
+    authUser,
+    hasCompletedOnboarding,
+    locationTrackingEnabled,
+    processGeoCoords,
+  ]);
 
   // Compute live sync score
   const completedTasks = tasks.filter((t) => t.status === 'completed');
@@ -943,6 +1197,8 @@ export default function App() {
       subtasks: newTask.subtasks || [],
       isTopPriority: !newTask.isUnclassified && newTask.priority === 'high',
       isUnclassified: Boolean(newTask.isUnclassified),
+      ...(Array.isArray(newTask.tags) && newTask.tags.length > 0 ? { tags: newTask.tags } : {}),
+      ...(newTask.locationReminder ? { locationReminder: newTask.locationReminder } : {}),
     };
     setTasks((prev) => [task, ...prev]);
     soundEngine.playChime(true);
@@ -952,6 +1208,64 @@ export default function App() {
   const handleUpdateTask = (updatedTask: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
     void runCloudMutation((uid) => upsertTaskDoc(uid, updatedTask, false));
+  };
+
+  const handleCreateCustomTag = (
+    rawName: string,
+    color: TaskTagColor = 'cyan'
+  ): TaskTag | null => {
+    const clean = normalizeTagName(rawName);
+    if (!clean) return null;
+    const key = clean.toLowerCase();
+    const existing = customTags.find(
+      (t) => normalizeTagName(t.name).toLowerCase() === key
+    );
+    if (existing) return existing;
+
+    const created: TaskTag = {
+      id: `tag-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      name: clean,
+      color,
+    };
+    const nextTags = [...customTags, created].slice(0, 30);
+    setCustomTags(nextTags);
+    soundEngine.playChime(true);
+    void runCloudMutation((uid) => syncWorkspaceFields(uid, { customTags: nextTags }));
+    return created;
+  };
+
+  const handleDeleteCustomTag = (tagId: string) => {
+    const target = customTags.find((t) => t.id === tagId);
+    if (!target) return;
+
+    const nextTags = customTags.filter((t) => t.id !== tagId);
+    setCustomTags(nextTags);
+
+    const targetKey = normalizeTagName(target.name).toLowerCase();
+    const updatedTasks: Task[] = [];
+    setTasks((prev) =>
+      prev.map((task) => {
+        if (
+          !task.tags ||
+          !task.tags.some((tg) => normalizeTagName(tg).toLowerCase() === targetKey)
+        ) {
+          return task;
+        }
+        const filteredTags = task.tags.filter(
+          (tg) => normalizeTagName(tg).toLowerCase() !== targetKey
+        );
+        const updated: Task = { ...task, tags: filteredTags };
+        updatedTasks.push(updated);
+        return updated;
+      })
+    );
+
+    void runCloudMutation(async (uid) => {
+      await syncWorkspaceFields(uid, { customTags: nextTags });
+      for (const ut of updatedTasks) {
+        await upsertTaskDoc(uid, ut, false);
+      }
+    });
   };
 
   const handleAutoClassifyTasks = async (
@@ -1260,6 +1574,7 @@ export default function App() {
         energyRequired: et.priority === 'high' ? 'high' : 'medium',
         createdAt: new Date().toISOString(),
         isTopPriority: et.priority === 'high',
+        ...(Array.isArray(et.tags) && et.tags.length > 0 ? { tags: et.tags } : {}),
       }));
       setTasks((prev) => [...createdTasks, ...prev]);
     }
@@ -1602,6 +1917,9 @@ export default function App() {
       customWidgets,
       dashboardLayout,
       phoneAppLists,
+      savedLocations,
+      locationTrackingEnabled,
+      customTags,
       exportedAt: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
@@ -1630,6 +1948,15 @@ export default function App() {
           ...(parsed.customWidgets ? { customWidgets: parsed.customWidgets } : {}),
           ...(parsed.dashboardLayout ? { dashboardLayout: parsed.dashboardLayout } : {}),
           ...(parsed.phoneAppLists ? { phoneAppLists: parsed.phoneAppLists } : {}),
+          ...(Array.isArray(parsed.savedLocations)
+            ? { savedLocations: parsed.savedLocations }
+            : {}),
+          ...(typeof parsed.locationTrackingEnabled === 'boolean'
+            ? { locationTrackingEnabled: parsed.locationTrackingEnabled }
+            : {}),
+          ...(Array.isArray(parsed.customTags)
+            ? { customTags: parsed.customTags }
+            : {}),
         };
         if (parsed.profile) setProfile(parsed.profile);
         if (parsed.tasks) setTasks(parsed.tasks);
@@ -1639,6 +1966,13 @@ export default function App() {
         if (parsed.customWidgets) setCustomWidgets(parsed.customWidgets);
         if (parsed.dashboardLayout) setDashboardLayout(parsed.dashboardLayout);
         if (parsed.phoneAppLists) setPhoneAppLists(parsed.phoneAppLists);
+        if (Array.isArray(parsed.savedLocations)) setSavedLocations(parsed.savedLocations);
+        if (typeof parsed.locationTrackingEnabled === 'boolean') {
+          setLocationTrackingEnabled(parsed.locationTrackingEnabled);
+        }
+        if (Array.isArray(parsed.customTags)) {
+          setCustomTags(parsed.customTags);
+        }
         soundEngine.playChime(true);
         void runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, nextSnapshot));
       } catch {
@@ -1660,6 +1994,9 @@ export default function App() {
         customWidgets: [],
         dashboardLayout: DEFAULT_DASHBOARD_LAYOUT,
         phoneAppLists: INITIAL_PHONE_APP_LISTS,
+        savedLocations: [],
+        locationTrackingEnabled: false,
+        customTags: DEFAULT_TASK_TAGS,
         quranNotificationsEnabled: true,
         pushEnabled: true,
         soundEnabled: true,
@@ -1673,6 +2010,13 @@ export default function App() {
       setCustomWidgets([]);
       setDashboardLayout(DEFAULT_DASHBOARD_LAYOUT);
       setPhoneAppLists(INITIAL_PHONE_APP_LISTS);
+      setSavedLocations([]);
+      setLocationTrackingEnabled(false);
+      setCustomTags(DEFAULT_TASK_TAGS);
+      setLocationReminders([]);
+      setCurrentGeoCoords(null);
+      setGeoDistances({});
+      setGeoError(null);
       localStorage.clear();
       void runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, resetSnapshot));
     }
@@ -1701,17 +2045,156 @@ export default function App() {
     }
   };
 
+  // Location & Geofencing Handlers
+  const handleSaveLocation = (loc: SavedLocation) => {
+    const nextLocations = savedLocations.some((l) => l.id === loc.id)
+      ? savedLocations.map((l) => (l.id === loc.id ? loc : l))
+      : [loc, ...savedLocations];
+
+    setSavedLocations(nextLocations);
+
+    const updatedLinkedTasks: Task[] = [];
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.locationReminder?.locationId === loc.id) {
+          const updated: Task = {
+            ...t,
+            locationReminder: {
+              ...t.locationReminder,
+              locationName: loc.name,
+              lat: loc.lat,
+              lng: loc.lng,
+              radiusMeters: loc.radiusMeters,
+            },
+          };
+          updatedLinkedTasks.push(updated);
+          return updated;
+        }
+        return t;
+      })
+    );
+
+    soundEngine.playChime(true);
+    void runCloudMutation(async (uid) => {
+      await syncWorkspaceFields(uid, { savedLocations: nextLocations });
+      for (const ut of updatedLinkedTasks) {
+        await upsertTaskDoc(uid, ut, false);
+      }
+    });
+  };
+
+  const handleDeleteLocation = (locationId: string) => {
+    const nextLocations = savedLocations.filter((l) => l.id !== locationId);
+    setSavedLocations(nextLocations);
+
+    const clearedTasks: Task[] = [];
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.locationReminder?.locationId === locationId) {
+          const { locationReminder: _removed, ...rest } = t;
+          const updated: Task = rest;
+          clearedTasks.push(updated);
+          return updated;
+        }
+        return t;
+      })
+    );
+
+    setLocationReminders((prev) =>
+      prev.filter((rem) => !rem.id.startsWith(`loc:${locationId}:`))
+    );
+
+    void runCloudMutation(async (uid) => {
+      await syncWorkspaceFields(uid, { savedLocations: nextLocations });
+      for (const ct of clearedTasks) {
+        await upsertTaskDoc(uid, ct, false);
+      }
+    });
+  };
+
+  const handleCheckLocationNow = async () => {
+    setGeoChecking(true);
+    setGeoError(null);
+    try {
+      const coords = await requestCurrentCoordinates();
+      processGeoCoords(coords);
+    } catch (err: any) {
+      setGeoError(err?.message || 'تعذر قراءة موقعك الحالي.');
+    } finally {
+      setGeoChecking(false);
+    }
+  };
+
+  const handleToggleLocationTracking = () => {
+    const next = !locationTrackingEnabled;
+    setLocationTrackingEnabled(next);
+    setGeoError(null);
+    if (next) {
+      void handleCheckLocationNow();
+    } else {
+      insideLocationIdsRef.current = new Set();
+      setGeoDistances({});
+    }
+    void runCloudMutation((uid) =>
+      syncWorkspaceFields(uid, { locationTrackingEnabled: next })
+    );
+  };
+
+  const handleSimulateArrival = (loc: SavedLocation) => {
+    const matches = buildSimulatedLocationMatches(loc, tasks);
+    const nowTag = Date.now();
+    const generated: SmartReminder[] =
+      matches.length > 0
+        ? buildLocationArrivalReminders(matches).map((rem, idx) => ({
+            ...rem,
+            id: `test:loc-${nowTag}-${idx}`,
+          }))
+        : [
+            {
+              id: `test:loc-${loc.id}-${nowTag}`,
+              sourceType: 'location',
+              locationName: loc.name,
+              distanceMeters: Math.min(25, Math.max(5, Math.round(loc.radiusMeters * 0.15))),
+              title: `تم محاكاة وصولك إلى «${loc.name}» — اربط مهامك بهذا الموقع لتظهر تلقائياً هنا`,
+              urgency: 'location_arrival',
+              timeLabel: `محاكاة الوصول • النطاق ${loc.radiusMeters} م`,
+              minutesDelta: 0,
+              priorityScore: 950,
+            },
+          ];
+
+    setTestToasts((prev) => [...generated, ...prev]);
+
+    if (!isDndActive) {
+      const primary = generated[0];
+      if (soundEnabled) {
+        playToneForReminder(primary);
+      }
+      if (pushEnabled) {
+        void sendLocationArrivalNotification(
+          `📍 محاكاة الوصول: ${loc.name}`,
+          primary.title,
+          primary.id
+        );
+      }
+    }
+  };
+
   const handleCompleteReminder = (reminder: SmartReminder) => {
     if (reminder.id.startsWith('test:')) {
       setTestToasts((prev) => prev.filter((t) => t.id !== reminder.id));
-      soundEngine.playChime(true);
+      if (reminder.sourceType === 'location' && reminder.task) {
+        handleToggleTask(reminder.task.id);
+      } else {
+        soundEngine.playChime(true);
+      }
       return;
     }
     if (reminder.sourceType === 'adhkar' && reminder.adhkarPeriod) {
       handleToggleAdhkar(reminder.adhkarPeriod);
       return;
     }
-    if (reminder.sourceType === 'task' && reminder.task) {
+    if ((reminder.sourceType === 'task' || reminder.sourceType === 'location') && reminder.task) {
       handleToggleTask(reminder.task.id);
     } else if (reminder.sourceType === 'schedule' && reminder.block) {
       handleToggleScheduleBlock(reminder.block.id);
@@ -1960,7 +2443,23 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0e17] text-slate-100 flex flex-col overflow-x-hidden selection:bg-cyan-500/30 selection:text-cyan-200">
-      
+      {mapsQuotaExceeded && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
+          <span>
+            Google Maps Platform quota reached. If you are the app owner, visit{' '}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
+            >
+              maps developer site
+            </a>{' '}
+            for instructions to update your account.
+          </span>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <Navbar
         currentTab={currentTab}
@@ -1971,7 +2470,7 @@ export default function App() {
         onOpenProfile={() => openProfileModal('profile')}
         onOpenBriefing={(type) => openBriefingModal(type)}
         syncScore={syncScore}
-        reminders={smartReminders}
+        reminders={allReminders}
         pushPermission={pushPermission}
         pushEnabled={pushEnabled}
         soundEnabled={soundEnabled}
@@ -2120,6 +2619,9 @@ export default function App() {
             onUpdatePhoneAppInList={handleUpdatePhoneAppInList}
             onDeletePhoneAppFromList={handleDeletePhoneAppFromList}
             onAddExtracted={handleAddExtracted}
+            customTags={customTags}
+            onCreateCustomTag={handleCreateCustomTag}
+            onDeleteCustomTag={handleDeleteCustomTag}
           />
         )}
 
@@ -2137,6 +2639,12 @@ export default function App() {
             onOpenContextualBriefing={(task) => openContextualBriefingModal(task)}
             onPostponeTask={handlePostponeTask}
             onAutoClassifyTasks={handleAutoClassifyTasks}
+            savedLocations={savedLocations}
+            locationTrackingEnabled={locationTrackingEnabled}
+            onSaveLocation={handleSaveLocation}
+            customTags={customTags}
+            onCreateCustomTag={handleCreateCustomTag}
+            onDeleteCustomTag={handleDeleteCustomTag}
           />
         )}
 
@@ -2164,7 +2672,7 @@ export default function App() {
 
         {currentTab === 'notifications' && (
           <NotificationsView
-            reminders={smartReminders}
+            reminders={allReminders}
             pushPermission={pushPermission}
             pushEnabled={pushEnabled}
             soundEnabled={soundEnabled}
@@ -2197,6 +2705,18 @@ export default function App() {
             onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
             onCheckTomorrowEnergy={() => handleTriggerTomorrowEnergyCheck()}
             onBackToDashboard={() => handleNavigateTab('dashboard')}
+            savedLocations={savedLocations}
+            tasks={tasks}
+            locationTrackingEnabled={locationTrackingEnabled}
+            onToggleLocationTracking={handleToggleLocationTracking}
+            onSaveLocation={handleSaveLocation}
+            onDeleteLocation={handleDeleteLocation}
+            onCheckLocationNow={handleCheckLocationNow}
+            onSimulateArrival={handleSimulateArrival}
+            currentGeoCoords={currentGeoCoords}
+            geoDistances={geoDistances}
+            geoError={geoError}
+            geoChecking={geoChecking}
           />
         )}
 

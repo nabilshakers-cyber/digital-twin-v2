@@ -12,6 +12,39 @@ export interface SubTask {
   focusTip?: string;
 }
 
+export type SavedLocationPreset = 'home' | 'work' | 'custom';
+
+export interface SavedLocation {
+  id: string;
+  name: string;
+  preset?: SavedLocationPreset;
+  address?: string;
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  placeId?: string;
+  updatedAt?: string;
+}
+
+export interface TaskLocationReminder {
+  locationId: string;
+  locationName: string;
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  enabled: boolean;
+  triggerOn?: 'arrive';
+  lastTriggeredAt?: string;
+}
+
+export type TaskTagColor = 'cyan' | 'emerald' | 'amber' | 'rose' | 'purple' | 'blue';
+
+export interface TaskTag {
+  id: string;
+  name: string;
+  color: TaskTagColor;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -24,12 +57,14 @@ export interface Task {
   dueTime?: string;
   energyRequired: 'high' | 'medium' | 'low';
   subtasks?: SubTask[];
+  tags?: string[];
   isTopPriority?: boolean;
   createdAt: string;
   completedAt?: string;
   goalId?: string;
   suggestedPostpone?: boolean;
   isUnclassified?: boolean;
+  locationReminder?: TaskLocationReminder;
 }
 
 export interface TimeBlock {

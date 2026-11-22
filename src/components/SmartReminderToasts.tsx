@@ -12,6 +12,7 @@ import {
   BatteryCharging,
   Calendar,
   Sparkles,
+  MapPin,
 } from 'lucide-react';
 import { SmartReminder } from '../utils/reminderEngine';
 import { TomorrowEnergyAnalysis } from '../utils/burnoutEngine';
@@ -48,12 +49,16 @@ export const SmartReminderToasts: React.FC<SmartReminderToastsProps> = ({
         const isGentleAdhkar = toast.urgency === 'gentle' || toast.sourceType === 'adhkar';
         const isEnergyWarning =
           toast.urgency === 'energy_warning' || toast.sourceType === 'energy_overload';
+        const isLocationArrival =
+          toast.urgency === 'location_arrival' || toast.sourceType === 'location';
 
         return (
           <div
             key={toast.id}
             className={`pointer-events-auto rounded-2xl border p-4 shadow-2xl backdrop-blur-xl animate-fadeIn transition-all ${
-              isEnergyWarning
+              isLocationArrival
+                ? 'bg-gradient-to-br from-cyan-950/95 via-slate-900/95 to-teal-950/90 border-cyan-500/60 shadow-cyan-900/30'
+                : isEnergyWarning
                 ? 'bg-gradient-to-br from-amber-950/95 via-slate-900/95 to-rose-950/90 border-amber-500/60 shadow-amber-900/30'
                 : isGentleAdhkar
                 ? 'bg-gradient-to-br from-emerald-950/95 via-slate-900/95 to-amber-950/90 border-amber-500/40 shadow-amber-900/20'
@@ -67,7 +72,9 @@ export const SmartReminderToasts: React.FC<SmartReminderToastsProps> = ({
               <div className="flex items-start gap-2.5 min-w-0">
                 <div
                   className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                    isEnergyWarning
+                    isLocationArrival
+                      ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-400/50'
+                      : isEnergyWarning
                       ? 'bg-amber-500/25 text-amber-300 border border-amber-400/50'
                       : isGentleAdhkar
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
@@ -76,7 +83,9 @@ export const SmartReminderToasts: React.FC<SmartReminderToastsProps> = ({
                       : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
                   }`}
                 >
-                  {isEnergyWarning ? (
+                  {isLocationArrival ? (
+                    <MapPin className="w-4 h-4 animate-bounce" />
+                  ) : isEnergyWarning ? (
                     <BatteryCharging className="w-4 h-4 animate-pulse" />
                   ) : isGentleAdhkar ? (
                     toast.adhkarPeriod === 'evening' ? (
@@ -95,7 +104,9 @@ export const SmartReminderToasts: React.FC<SmartReminderToastsProps> = ({
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        isEnergyWarning
+                        isLocationArrival
+                          ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                          : isEnergyWarning
                           ? 'bg-rose-500/25 text-amber-200 border border-amber-400/40'
                           : isGentleAdhkar
                           ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/30'
@@ -104,7 +115,9 @@ export const SmartReminderToasts: React.FC<SmartReminderToastsProps> = ({
                           : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                       }`}
                     >
-                      {isEnergyWarning
+                      {isLocationArrival
+                        ? 'تنبيه موقع جغرافي'
+                        : isEnergyWarning
                         ? 'تنبيه طاقة نهاية اليوم'
                         : isGentleAdhkar
                         ? 'تذكير أذكار لطيف'

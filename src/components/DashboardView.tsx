@@ -24,10 +24,14 @@ import {
   Edit3,
   Trash2,
   RotateCcw,
+  Tag,
+  X,
 } from 'lucide-react';
 import {
   DigitalTwinProfile,
   Task,
+  TaskTag,
+  TaskTagColor,
   TimeBlock,
   LongTermGoal,
   QuranRoutineItem,
@@ -37,6 +41,14 @@ import {
   PhoneAppList,
   PhoneAppShortcut,
 } from '../types';
+import {
+  DEFAULT_TASK_TAGS,
+  TASK_TAG_COLOR_OPTIONS,
+  getTagStyleByColor,
+  getTagStyleForName,
+  mergeAvailableTags,
+  normalizeTagName,
+} from '../utils/taskTags';
 import { TwinAvatarWidget } from './TwinAvatarWidget';
 import { MentalStateSummaryCard } from './MentalStateSummaryCard';
 import { ProductivityStatsPanel } from './ProductivityStatsPanel';
@@ -109,6 +121,9 @@ interface DashboardViewProps {
   onUpdatePhoneAppInList?: (listId: string, app: PhoneAppShortcut) => void;
   onDeletePhoneAppFromList?: (listId: string, appId: string) => void;
   onAddExtracted?: (tasks: Partial<Task>[], events: Partial<TimeBlock>[]) => void;
+  customTags?: TaskTag[];
+  onCreateCustomTag?: (name: string, color?: TaskTagColor) => TaskTag | null;
+  onDeleteCustomTag?: (tagId: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -158,6 +173,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onUpdatePhoneAppInList,
   onDeletePhoneAppFromList,
   onAddExtracted,
+  customTags = DEFAULT_TASK_TAGS,
+  onCreateCustomTag,
+  onDeleteCustomTag,
 }) => {
   const [isLayoutEditMode, setIsLayoutEditMode] = useState(false);
   const [customizerOpen, setCustomizerOpen] = useState(false);
@@ -165,6 +183,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [editingCustomWidget, setEditingCustomWidget] = useState<CustomDashboardWidget | null>(
     null
   );
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
+  const [isQuickTagOpen, setIsQuickTagOpen] = useState(false);
+  const [quickTagName, setQuickTagName] = useState('');
+  const [quickTagColor, setQuickTagColor] = useState<TaskTagColor>('cyan');
 
   useModalCloseListener('customizer-modal', () => {
     setCustomizerOpen(false);
@@ -183,6 +205,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const completedTasks = tasks.filter((t) => t.status === 'completed');
   const activeTopTasks = tasks.filter((t) => t.isTopPriority || t.priority === 'high');
+  const availableTags = mergeAvailableTags(tasks, customTags);
+  const savedTagIdMap = new Map(
+    customTags.map((t) => [normalizeTagName(t.name).toLowerCase(), t.id])
+  );
+  const normalizedSelectedTag =
+    selectedTagFilter === 'all' ? 'all' : normalizeTagName(selectedTagFilter).toLowerCase();
+
+  const displayedDashboardTasks =
+    normalizedSelectedTag === 'all'
+      ? activeTopTasks.slice(0, 3)
+      : tasks
+          .filter((t) =>
+            (t.tags || []).some(
+              (tg) => normalizeTagName(tg).toLowerCase() === normalizedSelectedTag
+            )
+          )
+          .sort((a, b) => {
+            if (a.status === 'completed' && b.status !== 'completed') return 1;
+            if (a.status !== 'completed' && b.status === 'completed') return -1;
+            return 0;
+          })
+          .slice(0, 8);
+
+  const handleCreateQuickTag = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = normalizeTagName(quickTagName);
+    if (!clean || !onCreateCustomTag) return;
+    const created = onCreateCustomTag(clean, quickTagColor);
+    if (created) {
+      setSelectedTagFilter(created.name);
+      setQuickTagName('');
+      setIsQuickTagOpen(false);
+    }
+  };
+
   const burnoutStatus = evaluateCognitiveLoad(tasks);
   const [rescheduleFeedback, setRescheduleFeedback] = useState<string | null>(null);
   const tomorrowStr = getTomorrowDateString();
@@ -441,13 +498,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       case 'priorities_and_schedule':
         return (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: Top Priorities (7 cols) */}
+            {/* Left Column: Top Priorities & Tag Filter (7 cols) */}
             <div className="lg:col-span-7 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-amber-400" />
+                  {selectedTagFilter === 'all' ? (
+                    <Zap className="w-5 h-5 text-amber-400" />
+                  ) : (
+                    <Tag className="w-5 h-5 text-cyan-400" />
+                  )}
                   <h3 className="text-base font-bold text-slate-100">
-                    أهم أولويات اليوم لا تقبل التأجيل
+                    {selectedTagFilter === 'all'
+                      ? 'أهم أولويات اليوم لا تقبل التأجيل'
+                      : `مهام تصنيف: ${selectedTagFilter}`}
                   </h3>
                 </div>
                 <button
@@ -459,25 +522,159 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
 
+              {/* Dashboard Tag / Label Filter Bar */}
+              <div
+                data-no-swipe="true"
+                className="bg-slate-900/70 border border-slate-800/90 rounded-2xl p-3 space-y-2.5"
+              >
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTagFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all shrink-0 cursor-pointer ${
+                      selectedTagFilter === 'all'
+                        ? 'bg-cyan-600 text-white border-cyan-400 shadow-sm shadow-cyan-600/30'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-600'
+                    }`}
+                  >
+                    الكل ({activeTopTasks.length})
+                  </button>
+
+                  {availableTags.map((tag) => {
+                    const tagKey = normalizeTagName(tag.name).toLowerCase();
+                    const isSelected = normalizedSelectedTag === tagKey;
+                    const count = tasks.filter((t) =>
+                      (t.tags || []).some((tg) => normalizeTagName(tg).toLowerCase() === tagKey)
+                    ).length;
+                    const style = getTagStyleByColor(tag.color);
+                    const savedTagId = savedTagIdMap.get(tagKey);
+
+                    return (
+                      <div
+                        key={tag.id}
+                        className={`inline-flex items-center rounded-lg border text-[11px] font-semibold transition-all shrink-0 ${
+                          isSelected ? style.selectedClass : style.badgeClass
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedTagFilter(isSelected ? 'all' : tag.name)
+                          }
+                          className="flex items-center gap-1.5 px-2.5 py-1 cursor-pointer"
+                        >
+                          <span className={`w-2 h-2 rounded-full ${style.dotClass}`} />
+                          <span>{tag.name}</span>
+                          <span className="opacity-75 text-[10px]">({count})</span>
+                        </button>
+                        {savedTagId && onDeleteCustomTag && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isSelected) setSelectedTagFilter('all');
+                              onDeleteCustomTag(savedTagId);
+                            }}
+                            title={`حذف تصنيف ${tag.name}`}
+                            className="pl-1.5 pr-1 py-1 opacity-70 hover:opacity-100 hover:text-rose-200 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {onCreateCustomTag && (
+                    <button
+                      type="button"
+                      id="btn-dashboard-add-tag"
+                      onClick={() => setIsQuickTagOpen((v) => !v)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+                        isQuickTagOpen
+                          ? 'bg-emerald-600/20 border-emerald-500/60 text-emerald-300'
+                          : 'bg-slate-800/80 hover:bg-slate-800 border-dashed border-slate-600 text-cyan-300'
+                      }`}
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>وسم جديد</span>
+                    </button>
+                  )}
+                </div>
+
+                {isQuickTagOpen && onCreateCustomTag && (
+                  <form
+                    onSubmit={handleCreateQuickTag}
+                    className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80 animate-fadeIn"
+                  >
+                    <input
+                      type="text"
+                      value={quickTagName}
+                      onChange={(e) => setQuickTagName(e.target.value)}
+                      maxLength={40}
+                      placeholder="اسم التصنيف (مثل: مشروع، مراجعة، جامعة)..."
+                      className="flex-1 min-w-[160px] bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                    />
+                    <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2 py-1">
+                      {TASK_TAG_COLOR_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setQuickTagColor(opt.value)}
+                          title={opt.label}
+                          className={`w-4 h-4 rounded-full ${opt.dotClass} transition-transform cursor-pointer ${
+                            quickTagColor === opt.value
+                              ? 'ring-2 ring-white scale-110'
+                              : 'opacity-55 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={!quickTagName.trim()}
+                      className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-bold transition-all cursor-pointer"
+                    >
+                      حفظ
+                    </button>
+                  </form>
+                )}
+              </div>
+
               <div className="space-y-3">
-                {activeTopTasks.length === 0 ? (
+                {displayedDashboardTasks.length === 0 ? (
                   <div className="bg-slate-900/60 rounded-2xl border border-slate-800 p-8 text-center">
                     <CheckSquare className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
                     <p className="text-sm font-medium text-slate-200">
-                      أحسنت! لا توجد أولويات عاجلة معلقة حالياً
+                      {selectedTagFilter === 'all'
+                        ? 'أحسنت! لا توجد أولويات عاجلة معلقة حالياً'
+                        : `لا توجد مهام مرتبطة بتصنيف «${selectedTagFilter}»`}
                     </p>
                     <p className="text-xs text-slate-400 mt-1">
-                      نسختك الرقمية مستعدة لجدولة مهام جديدة
+                      {selectedTagFilter === 'all'
+                        ? 'نسختك الرقمية مستعدة لجدولة مهام جديدة'
+                        : 'يمكنك تعيين هذا الوسم لأي مهمة من مركز المهام أو إضافة مهمة جديدة'}
                     </p>
-                    <button
-                      onClick={onOpenQuickAdd}
-                      className="mt-4 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold cursor-pointer"
-                    >
-                      إضافة مهمة جديدة
-                    </button>
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                      {selectedTagFilter !== 'all' && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTagFilter('all')}
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer"
+                        >
+                          العودة للأولويات
+                        </button>
+                      )}
+                      <button
+                        onClick={onOpenQuickAdd}
+                        className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold cursor-pointer"
+                      >
+                        إضافة مهمة جديدة
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  activeTopTasks.slice(0, 3).map((task) => {
+                  displayedDashboardTasks.map((task) => {
                     const isCompleted = task.status === 'completed';
                     const subtasksCount = task.subtasks?.length || 0;
                     const completedSubtasks =
@@ -523,9 +720,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               )}
 
                               <div className="flex flex-wrap items-center gap-2 mt-2.5 text-[11px]">
-                                <span className="px-2 py-0.5 rounded-md bg-rose-950/70 text-rose-300 border border-rose-800/60 font-medium">
-                                  أولوية قصوى
+                                <span
+                                  className={`px-2 py-0.5 rounded-md border font-medium ${
+                                    task.priority === 'high' || task.isTopPriority
+                                      ? 'bg-rose-950/70 text-rose-300 border-rose-800/60'
+                                      : task.priority === 'medium'
+                                      ? 'bg-amber-950/70 text-amber-300 border-amber-800/60'
+                                      : 'bg-slate-800/70 text-slate-300 border-slate-700/60'
+                                  }`}
+                                >
+                                  {task.priority === 'high' || task.isTopPriority
+                                    ? 'أولوية قصوى'
+                                    : task.priority === 'medium'
+                                    ? 'أولوية متوسطة'
+                                    : 'أولوية منخفضة'}
                                 </span>
+
+                                {(task.tags || []).map((tagName) => {
+                                  const tagStyle = getTagStyleForName(tagName, customTags);
+                                  return (
+                                    <button
+                                      key={tagName}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedTagFilter(
+                                          normalizedSelectedTag ===
+                                            normalizeTagName(tagName).toLowerCase()
+                                            ? 'all'
+                                            : tagName
+                                        )
+                                      }
+                                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-medium transition-opacity hover:opacity-90 cursor-pointer ${tagStyle.badgeClass}`}
+                                    >
+                                      <Tag className="w-2.5 h-2.5" />
+                                      <span>{tagName}</span>
+                                    </button>
+                                  );
+                                })}
 
                                 {urgencyInfo && (
                                   <span

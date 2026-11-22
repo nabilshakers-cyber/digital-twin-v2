@@ -4,16 +4,24 @@ import {
   isEndOfDayWindow,
   TomorrowEnergyAnalysis,
 } from './burnoutEngine';
+import { formatDistanceArabic, LocationArrivalMatch } from './geofencing';
 
-export type ReminderUrgency = 'overdue' | 'due_soon' | 'gentle' | 'energy_warning';
+export type ReminderUrgency =
+  | 'overdue'
+  | 'due_soon'
+  | 'gentle'
+  | 'energy_warning'
+  | 'location_arrival';
 
 export interface SmartReminder {
   id: string;
-  sourceType: 'task' | 'schedule' | 'adhkar' | 'energy_overload';
+  sourceType: 'task' | 'schedule' | 'adhkar' | 'energy_overload' | 'location';
   task?: Task;
   block?: TimeBlock;
   adhkarPeriod?: 'morning' | 'evening';
   energyAnalysis?: TomorrowEnergyAnalysis;
+  locationName?: string;
+  distanceMeters?: number;
   title: string;
   urgency: ReminderUrgency;
   timeLabel: string;
@@ -367,6 +375,22 @@ export const buildTomorrowEnergyAlertReminder = (
   minutesDelta: 0,
   priorityScore: 950,
 });
+
+export const buildLocationArrivalReminders = (
+  matches: LocationArrivalMatch[]
+): SmartReminder[] =>
+  matches.map((match) => ({
+    id: `loc:${match.locationId}:task:${match.task.id}`,
+    sourceType: 'location',
+    task: match.task,
+    locationName: match.locationName,
+    distanceMeters: match.distanceMeters,
+    title: match.task.title,
+    urgency: 'location_arrival',
+    timeLabel: `عند وصولك إلى: ${match.locationName} (على بُعد ${formatDistanceArabic(match.distanceMeters)})`,
+    minutesDelta: 0,
+    priorityScore: 920 + (match.task.priority === 'high' ? 60 : match.task.priority === 'medium' ? 30 : 0),
+  }));
 
 export const isPushSupported = (): boolean => {
   return typeof window !== 'undefined' && 'Notification' in window;

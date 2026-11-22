@@ -517,3 +517,66 @@ export function useScheduledReminders(): Record<string, ScheduledLocalReminder> 
 
   return remindersMap;
 }
+
+/**
+ * Dispatches an immediate notification when entering a task's geofenced location
+ * using Capacitor LocalNotifications on mobile or browser Notification API on web.
+ */
+export async function sendLocationArrivalNotification(
+  title: string,
+  body: string,
+  itemKey: string
+): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const perm = await requestLocalNotificationPermissions();
+      if (perm !== 'granted') return false;
+      await ensureAndroidChannel();
+      const numericId = resolveReminderId(itemKey);
+      await LocalNotifications.schedule({
+        notifications: [
+          {
+            id: numericId,
+            title,
+            body,
+            largeBody: body,
+            schedule: { at: new Date(Date.now() + 800), allowWhileIdle: true },
+            channelId:
+              Capacitor.getPlatform() === 'android' ? REMINDER_CHANNEL_ID : undefined,
+            foreground: true,
+            autoCancel: true,
+            extra: {
+              itemKey,
+              category: 'task',
+            },
+          },
+        ],
+      });
+      return true;
+    } catch (err) {
+      console.warn('Failed to send native location notification:', err);
+      return false;
+    }
+  }
+
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    try {
+      const notif = new Notification(title, {
+        body,
+        tag: itemKey,
+        dir: 'rtl',
+        lang: 'ar',
+      });
+      notif.onclick = () => {
+        window.focus();
+        notif.close();
+      };
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+

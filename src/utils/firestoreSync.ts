@@ -1,6 +1,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -20,7 +21,11 @@ import type {
   LongTermGoal,
   PhoneAppList,
   QuranRoutineItem,
+  SavedLocation,
   Task,
+  TaskLocationReminder,
+  TaskTag,
+  TaskTagColor,
   TimeBlock,
 } from '../types';
 
@@ -34,6 +39,9 @@ export interface LocalWorkspaceSnapshot {
   customWidgets: CustomDashboardWidget[];
   dashboardLayout: DashboardLayoutEntry[];
   phoneAppLists: PhoneAppList[];
+  savedLocations?: SavedLocation[];
+  locationTrackingEnabled?: boolean;
+  customTags?: TaskTag[];
   quranNotificationsEnabled: boolean;
   pushEnabled: boolean;
   soundEnabled: boolean;
@@ -44,6 +52,9 @@ export interface WorkspaceSettingsPayload {
   profile: DigitalTwinProfile;
   dashboardLayout: DashboardLayoutEntry[];
   adhkarState: DailyAdhkarState;
+  savedLocations: SavedLocation[];
+  locationTrackingEnabled: boolean;
+  customTags: TaskTag[];
   quranNotificationsEnabled: boolean;
   pushEnabled: boolean;
   soundEnabled: boolean;
@@ -140,6 +151,71 @@ function sanitizeLayout(layout: DashboardLayoutEntry[]): DashboardLayoutEntry[] 
   }));
 }
 
+function sanitizeSavedLocations(locs: SavedLocation[] | undefined): SavedLocation[] {
+  const validPresets = new Set(['home', 'work', 'custom']);
+  return (Array.isArray(locs) ? locs : []).slice(0, 25).map((loc, idx) => {
+    const cleaned: SavedLocation = {
+      id: sanitizeDocId(loc.id || `loc-${idx}`, 'loc'),
+      name: trunc(loc.name, 120, 'موقع محفوظ').trim() || 'موقع محفوظ',
+      preset: validPresets.has(loc.preset || '') ? loc.preset : 'custom',
+      lat: clampNum(loc.lat, -90, 90, 24.7136),
+      lng: clampNum(loc.lng, -180, 180, 46.6753),
+      radiusMeters: Math.round(clampNum(loc.radiusMeters, 50, 50000, 200)),
+    };
+    if (loc.address) cleaned.address = trunc(loc.address, 300);
+    if (loc.placeId) cleaned.placeId = trunc(loc.placeId, 200);
+    if (loc.updatedAt) cleaned.updatedAt = trunc(loc.updatedAt, 64);
+    return cleaned;
+  });
+}
+
+function sanitizeTaskLocationReminder(lr: TaskLocationReminder): TaskLocationReminder {
+  const cleaned: TaskLocationReminder = {
+    locationId: sanitizeDocId(lr.locationId || 'loc', 'loc'),
+    locationName: trunc(lr.locationName, 120, 'موقع محفوظ').trim() || 'موقع محفوظ',
+    lat: clampNum(lr.lat, -90, 90, 24.7136),
+    lng: clampNum(lr.lng, -180, 180, 46.6753),
+    radiusMeters: Math.round(clampNum(lr.radiusMeters, 50, 50000, 200)),
+    enabled: Boolean(lr.enabled),
+    triggerOn: 'arrive',
+  };
+  if (lr.lastTriggeredAt) {
+    cleaned.lastTriggeredAt = trunc(lr.lastTriggeredAt, 64);
+  }
+  return cleaned;
+}
+
+function sanitizeCustomTags(tags: TaskTag[] | undefined): TaskTag[] {
+  const validColors = new Set<TaskTagColor>(['cyan', 'emerald', 'amber', 'rose', 'purple', 'blue']);
+  return (Array.isArray(tags) ? tags : [])
+    .slice(0, 30)
+    .map((tag, idx) => {
+      const cleanName = trunc(tag?.name, 40, '').trim();
+      return {
+        id: sanitizeDocId(tag?.id || `tag-${idx}`, 'tag'),
+        name: cleanName || 'وسم',
+        color: validColors.has(tag?.color) ? tag.color : 'cyan',
+      };
+    });
+}
+
+function sanitizeTaskTags(tags: string[] | undefined): string[] {
+  if (!Array.isArray(tags)) return [];
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const raw of tags) {
+    if (typeof raw !== 'string') continue;
+    const val = raw.trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!val) continue;
+    const key = val.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(val);
+    if (cleaned.length >= 15) break;
+  }
+  return cleaned;
+}
+
 function serializeTask(uid: string, task: Task, includeCreatedAt: boolean) {
   const id = sanitizeDocId(task.id, 'task');
   const validCat = new Set(['work', 'personal', 'health', 'study', 'urgent']);
@@ -193,6 +269,12 @@ function serializeTask(uid: string, task: Task, includeCreatedAt: boolean) {
   }
   if (task.goalId) {
     payload.goalId = trunc(task.goalId, 128);
+  }
+  if (task.locationReminder) {
+    payload.locationReminder = sanitizeTaskLocationReminder(task.locationReminder);
+  }
+  if (Array.isArray(task.tags)) {
+    payload.tags = sanitizeTaskTags(task.tags);
   }
 
   return { id, payload };
@@ -342,6 +424,9 @@ export async function ensureUserWorkspace(
       profile: sanitizeProfile(localData.profile),
       dashboardLayout: sanitizeLayout(localData.dashboardLayout),
       adhkarState: sanitizeAdhkar(localData.adhkarState),
+      savedLocations: sanitizeSavedLocations(localData.savedLocations),
+      locationTrackingEnabled: Boolean(localData.locationTrackingEnabled),
+      customTags: sanitizeCustomTags(localData.customTags),
       quranNotificationsEnabled: Boolean(localData.quranNotificationsEnabled),
       pushEnabled: Boolean(localData.pushEnabled),
       soundEnabled: Boolean(localData.soundEnabled),
@@ -403,6 +488,9 @@ export async function pushLocalSnapshotToCloud(
         profile: sanitizeProfile(localData.profile),
         dashboardLayout: sanitizeLayout(localData.dashboardLayout),
         adhkarState: sanitizeAdhkar(localData.adhkarState),
+        savedLocations: sanitizeSavedLocations(localData.savedLocations),
+        locationTrackingEnabled: Boolean(localData.locationTrackingEnabled),
+        customTags: sanitizeCustomTags(localData.customTags),
         quranNotificationsEnabled: Boolean(localData.quranNotificationsEnabled),
         pushEnabled: Boolean(localData.pushEnabled),
         soundEnabled: Boolean(localData.soundEnabled),
@@ -415,6 +503,9 @@ export async function pushLocalSnapshotToCloud(
         profile: sanitizeProfile(localData.profile),
         dashboardLayout: sanitizeLayout(localData.dashboardLayout),
         adhkarState: sanitizeAdhkar(localData.adhkarState),
+        savedLocations: sanitizeSavedLocations(localData.savedLocations),
+        locationTrackingEnabled: Boolean(localData.locationTrackingEnabled),
+        customTags: sanitizeCustomTags(localData.customTags),
         quranNotificationsEnabled: Boolean(localData.quranNotificationsEnabled),
         pushEnabled: Boolean(localData.pushEnabled),
         soundEnabled: Boolean(localData.soundEnabled),
@@ -481,6 +572,12 @@ export function subscribeUserCloudData(
           profile: data.profile,
           dashboardLayout: data.dashboardLayout,
           adhkarState: data.adhkarState,
+          savedLocations: Array.isArray(data.savedLocations) ? data.savedLocations : undefined,
+          locationTrackingEnabled:
+            typeof data.locationTrackingEnabled === 'boolean'
+              ? data.locationTrackingEnabled
+              : undefined,
+          customTags: Array.isArray(data.customTags) ? data.customTags : undefined,
           quranNotificationsEnabled: data.quranNotificationsEnabled,
           pushEnabled: data.pushEnabled,
           soundEnabled: data.soundEnabled,
@@ -514,11 +611,13 @@ export function subscribeUserCloudData(
             dueTime: data.dueTime,
             energyRequired: data.energyRequired || 'medium',
             subtasks: data.subtasks,
+            tags: Array.isArray(data.tags) ? data.tags : undefined,
             isTopPriority: data.isTopPriority,
             isUnclassified: Boolean(data.isUnclassified),
             createdAt: data.clientCreatedAt || new Date().toISOString(),
             completedAt: data.completedAt,
             goalId: data.goalId,
+            ...(data.locationReminder ? { locationReminder: data.locationReminder } : {}),
           };
         });
         list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -693,6 +792,15 @@ export async function syncWorkspaceFields(
   if (partial.profile) updatePayload.profile = sanitizeProfile(partial.profile);
   if (partial.dashboardLayout) updatePayload.dashboardLayout = sanitizeLayout(partial.dashboardLayout);
   if (partial.adhkarState) updatePayload.adhkarState = sanitizeAdhkar(partial.adhkarState);
+  if (partial.savedLocations !== undefined) {
+    updatePayload.savedLocations = sanitizeSavedLocations(partial.savedLocations);
+  }
+  if (partial.locationTrackingEnabled !== undefined) {
+    updatePayload.locationTrackingEnabled = Boolean(partial.locationTrackingEnabled);
+  }
+  if (partial.customTags !== undefined) {
+    updatePayload.customTags = sanitizeCustomTags(partial.customTags);
+  }
   if (partial.quranNotificationsEnabled !== undefined) {
     updatePayload.quranNotificationsEnabled = Boolean(partial.quranNotificationsEnabled);
   }
@@ -716,10 +824,13 @@ export async function upsertTaskDoc(uid: string, task: Task, isNew: boolean): Pr
     if (isNew) {
       await setDoc(doc(db, 'users', uid, 'tasks', id), payload);
     } else {
-      const updatePayload = { ...payload };
+      const updatePayload: Record<string, unknown> = { ...payload };
       delete updatePayload.id;
       delete updatePayload.ownerId;
       delete updatePayload.clientCreatedAt;
+      if (!task.locationReminder) {
+        updatePayload.locationReminder = deleteField();
+      }
       await updateDoc(doc(db, 'users', uid, 'tasks', id), updatePayload);
     }
   } catch (error) {
