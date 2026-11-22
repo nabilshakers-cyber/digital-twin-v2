@@ -30,6 +30,7 @@ import {
   ArrowLeftRight,
   Undo2,
   MapPin,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Task, Priority, TaskCategory, TaskStatus, SavedLocation, TaskLocationReminder, TaskTag, TaskTagColor } from '../types';
 import { FRIENDLY_AI_CONNECTION_ERROR } from '../utils/api';
@@ -49,6 +50,7 @@ import {
 import { useScheduledReminders } from '../utils/localNotifications';
 import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
 import { LocationPickerModal } from './LocationPickerModal';
+import { CsvTaskImportModal } from './CsvTaskImportModal';
 import { broadcastCloseAllModals } from '../utils/modalCoordinator';
 import { SwipeableTaskCard, SwipeOpenSide } from './SwipeableTaskCard';
 
@@ -65,6 +67,10 @@ interface TasksHubViewProps {
   onOpenContextualBriefing: (task: Task) => void;
   onPostponeTask: (taskId: string) => void;
   onAutoClassifyTasks?: (tasksToClassify: Task[]) => Promise<{ count: number; summary: string }>;
+  onImportTasks?: (
+    importedTasks: Partial<Task>[],
+    options?: { autoCreateTags?: boolean; discoveredTags?: string[] }
+  ) => void;
   savedLocations?: SavedLocation[];
   locationTrackingEnabled?: boolean;
   onSaveLocation?: (loc: SavedLocation) => void;
@@ -86,6 +92,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   onOpenContextualBriefing,
   onPostponeTask,
   onAutoClassifyTasks,
+  onImportTasks,
   savedLocations = [],
   locationTrackingEnabled = false,
   onSaveLocation,
@@ -100,6 +107,8 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
   const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
+  const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
+  const [csvImportSuccessMsg, setCsvImportSuccessMsg] = useState<string | null>(null);
   const scheduledReminders = useScheduledReminders();
 
   const openTaskReminderPicker = (task: Task) => {
@@ -558,8 +567,39 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
               <Plus className="w-3.5 h-3.5 text-cyan-400" />
               <span>مهمة يدوية</span>
             </button>
+
+            <button
+              type="button"
+              id="btn-open-csv-import"
+              onClick={() => {
+                broadcastCloseAllModals('csv-import-modal');
+                setIsCsvImportOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-emerald-950/70 text-emerald-300 border border-emerald-700/50 text-xs font-semibold transition-all cursor-pointer"
+              title="استيراد مهام من ملف CSV أو تصديرها"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>استيراد CSV</span>
+            </button>
           </div>
         </div>
+
+        {/* CSV Import Success Banner */}
+        {csvImportSuccessMsg && (
+          <div className="px-3.5 py-2.5 rounded-xl bg-emerald-950/60 border border-emerald-700/60 text-xs text-emerald-200 flex items-center justify-between gap-2 animate-fadeIn">
+            <span className="flex items-center gap-1.5 font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{csvImportSuccessMsg}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setCsvImportSuccessMsg(null)}
+              className="text-emerald-300 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Auto-Classify Feedback Banners */}
         {classifySuccessMsg && (
@@ -1898,6 +1938,23 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
           }}
         />
       )}
+
+      <CsvTaskImportModal
+        isOpen={isCsvImportOpen}
+        onClose={() => setIsCsvImportOpen(false)}
+        existingTasks={tasks}
+        customTags={customTags}
+        onImportTasks={(importedTasks, options) => {
+          if (onImportTasks) {
+            onImportTasks(importedTasks, options);
+          } else {
+            importedTasks.forEach((t) => onAddTask(t));
+          }
+          setCsvImportSuccessMsg(
+            `تم استيراد ${importedTasks.length} مهمة من ملف CSV وإضافتها إلى مهامك بنجاح.`
+          );
+        }}
+      />
 
     </div>
   );

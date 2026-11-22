@@ -6,9 +6,11 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
@@ -527,7 +529,9 @@ export async function pushLocalSnapshotToCloud(
     const deleteBatch = writeBatch(db);
     let deleteCount = 0;
     for (const colName of subcollections) {
-      const colSnap = await getDocs(collection(db, 'users', uid, colName));
+      const colSnap = await getDocs(
+        query(collection(db, 'users', uid, colName), where('ownerId', '==', uid))
+      );
       colSnap.forEach((docSnap) => {
         deleteBatch.delete(docSnap.ref);
         deleteCount += 1;
@@ -595,7 +599,7 @@ export function subscribeUserCloudData(
   const tasksPath = `users/${uid}/tasks`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'tasks'),
+      query(collection(db, 'users', uid, 'tasks'), where('ownerId', '==', uid)),
       (snap) => {
         const list: Task[] = snap.docs.map((d) => {
           const data = d.data();
@@ -634,7 +638,7 @@ export function subscribeUserCloudData(
   const schedulePath = `users/${uid}/schedule`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'schedule'),
+      query(collection(db, 'users', uid, 'schedule'), where('ownerId', '==', uid)),
       (snap) => {
         const list: TimeBlock[] = snap.docs.map((d) => {
           const data = d.data();
@@ -668,7 +672,7 @@ export function subscribeUserCloudData(
   const goalsPath = `users/${uid}/goals`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'goals'),
+      query(collection(db, 'users', uid, 'goals'), where('ownerId', '==', uid)),
       (snap) => {
         const list: LongTermGoal[] = snap.docs.map((d) => {
           const data = d.data();
@@ -694,7 +698,7 @@ export function subscribeUserCloudData(
   const quranPath = `users/${uid}/quranRoutine`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'quranRoutine'),
+      query(collection(db, 'users', uid, 'quranRoutine'), where('ownerId', '==', uid)),
       (snap) => {
         const list: QuranRoutineItem[] = snap.docs.map((d) => {
           const data = d.data();
@@ -722,7 +726,7 @@ export function subscribeUserCloudData(
   const widgetsPath = `users/${uid}/customWidgets`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'customWidgets'),
+      query(collection(db, 'users', uid, 'customWidgets'), where('ownerId', '==', uid)),
       (snap) => {
         const list: CustomDashboardWidget[] = snap.docs.map((d) => {
           const data = d.data();
@@ -754,7 +758,7 @@ export function subscribeUserCloudData(
   const phonePath = `users/${uid}/phoneAppLists`;
   unsubscribers.push(
     onSnapshot(
-      collection(db, 'users', uid, 'phoneAppLists'),
+      query(collection(db, 'users', uid, 'phoneAppLists'), where('ownerId', '==', uid)),
       (snap) => {
         const list: PhoneAppList[] = snap.docs.map((d) => {
           const data = d.data();
@@ -835,6 +839,25 @@ export async function upsertTaskDoc(uid: string, task: Task, isNew: boolean): Pr
     }
   } catch (error) {
     handleFirestoreError(error, isNew ? OperationType.CREATE : OperationType.UPDATE, path);
+  }
+}
+
+export async function batchCreateTasksDocs(uid: string, tasks: Task[]): Promise<void> {
+  if (tasks.length === 0) return;
+  const path = `users/${uid}/tasks`;
+  const CHUNK_SIZE = 400;
+  try {
+    for (let i = 0; i < tasks.length; i += CHUNK_SIZE) {
+      const chunk = tasks.slice(i, i + CHUNK_SIZE);
+      const batch = writeBatch(db);
+      for (const task of chunk) {
+        const { id, payload } = serializeTask(uid, task, true);
+        batch.set(doc(db, 'users', uid, 'tasks', id), payload);
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

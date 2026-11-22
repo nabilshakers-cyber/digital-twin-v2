@@ -23,7 +23,7 @@ import {
   TaskTag,
   TaskTagColor
 } from './types';
-import { DEFAULT_TASK_TAGS, normalizeTagName } from './utils/taskTags';
+import { DEFAULT_TASK_TAGS, normalizeTagName, TASK_TAG_COLOR_OPTIONS } from './utils/taskTags';
 import { DEFAULT_DASHBOARD_LAYOUT, INITIAL_PHONE_APP_LISTS } from './data/dashboardDefaults';
 import { normalizeLegacyPhoneAppIcon } from './components/PhoneAppIcon';
 import { Navbar, type AppNavTab } from './components/Navbar';
@@ -82,6 +82,7 @@ import {
   type AppAuthUser,
 } from './firebase';
 import {
+  batchCreateTasksDocs,
   deleteCustomWidgetDoc,
   deleteGoalDoc,
   deletePhoneAppListDoc,
@@ -1208,6 +1209,82 @@ export default function App() {
   const handleUpdateTask = (updatedTask: Task) => {
     setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
     void runCloudMutation((uid) => upsertTaskDoc(uid, updatedTask, false));
+  };
+
+  const handleImportTasksBatch = (
+    importedTasks: Partial<Task>[],
+    options?: { autoCreateTags?: boolean; discoveredTags?: string[] }
+  ) => {
+    if (!importedTasks || importedTasks.length === 0) return;
+
+    const nowMs = Date.now();
+    const createdTasks: Task[] = importedTasks.map((item, idx) => {
+      const priority = item.priority || 'medium';
+      const status = item.status || 'todo';
+      return {
+        id: `task-csv-${nowMs}-${idx}`,
+        title: (item.title || 'مهمة مستوردة').trim().slice(0, 300),
+        description: (item.description || '').trim().slice(0, 2000),
+        category: item.category || 'work',
+        priority,
+        status,
+        estimatedMinutes: item.estimatedMinutes || 30,
+        dueDate: item.dueDate,
+        dueTime: item.dueTime,
+        energyRequired:
+          item.energyRequired ||
+          (priority === 'high' ? 'high' : priority === 'low' ? 'low' : 'medium'),
+        createdAt: new Date(nowMs + idx).toISOString(),
+        subtasks: item.subtasks || [],
+        isTopPriority: priority === 'high',
+        isUnclassified: false,
+        ...(Array.isArray(item.tags) && item.tags.length > 0 ? { tags: item.tags } : {}),
+        ...(status === 'completed'
+          ? { completedAt: item.completedAt || new Date().toISOString() }
+          : {}),
+      };
+    });
+
+    setTasks((prev) => [...createdTasks, ...prev]);
+
+    let nextTagsToSync: TaskTag[] | null = null;
+    if (options?.autoCreateTags && options.discoveredTags && options.discoveredTags.length > 0) {
+      const existingKeys = new Set(
+        customTags.map((t) => normalizeTagName(t.name).toLowerCase())
+      );
+      const newlyAddedTags: TaskTag[] = [];
+      let colorOffset = customTags.length;
+
+      for (const rawName of options.discoveredTags) {
+        const clean = normalizeTagName(rawName);
+        if (!clean) continue;
+        const key = clean.toLowerCase();
+        if (existingKeys.has(key)) continue;
+        if (customTags.length + newlyAddedTags.length >= 30) break;
+        existingKeys.add(key);
+        const color =
+          TASK_TAG_COLOR_OPTIONS[colorOffset % TASK_TAG_COLOR_OPTIONS.length].value;
+        colorOffset += 1;
+        newlyAddedTags.push({
+          id: `tag-csv-${nowMs}-${newlyAddedTags.length}`,
+          name: clean,
+          color,
+        });
+      }
+
+      if (newlyAddedTags.length > 0) {
+        nextTagsToSync = [...customTags, ...newlyAddedTags].slice(0, 30);
+        setCustomTags(nextTagsToSync);
+      }
+    }
+
+    soundEngine.playChime(true);
+    void runCloudMutation(async (uid) => {
+      await batchCreateTasksDocs(uid, createdTasks);
+      if (nextTagsToSync) {
+        await syncWorkspaceFields(uid, { customTags: nextTagsToSync });
+      }
+    });
   };
 
   const handleCreateCustomTag = (
@@ -2639,6 +2716,7 @@ export default function App() {
             onOpenContextualBriefing={(task) => openContextualBriefingModal(task)}
             onPostponeTask={handlePostponeTask}
             onAutoClassifyTasks={handleAutoClassifyTasks}
+            onImportTasks={handleImportTasksBatch}
             savedLocations={savedLocations}
             locationTrackingEnabled={locationTrackingEnabled}
             onSaveLocation={handleSaveLocation}
