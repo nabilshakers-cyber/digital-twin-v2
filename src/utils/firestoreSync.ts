@@ -26,10 +26,14 @@ import type {
   SavedLocation,
   Task,
   TaskLocationReminder,
+  TaskRecurrence,
   TaskTag,
   TaskTagColor,
+  TaskTemplate,
   TimeBlock,
 } from '../types';
+import { normalizeRecurrence } from './taskRecurrence';
+import { sanitizeTaskTemplate } from './taskTemplates';
 
 export interface LocalWorkspaceSnapshot {
   profile: DigitalTwinProfile;
@@ -44,6 +48,7 @@ export interface LocalWorkspaceSnapshot {
   savedLocations?: SavedLocation[];
   locationTrackingEnabled?: boolean;
   customTags?: TaskTag[];
+  taskTemplates?: TaskTemplate[];
   quranNotificationsEnabled: boolean;
   pushEnabled: boolean;
   soundEnabled: boolean;
@@ -275,6 +280,10 @@ function serializeTask(uid: string, task: Task, includeCreatedAt: boolean) {
   if (task.locationReminder) {
     payload.locationReminder = sanitizeTaskLocationReminder(task.locationReminder);
   }
+  const normalizedRecurrence = normalizeRecurrence(task.recurrence);
+  if (normalizedRecurrence) {
+    payload.recurrence = normalizedRecurrence as TaskRecurrence;
+  }
   if (Array.isArray(task.tags)) {
     payload.tags = sanitizeTaskTags(task.tags);
   }
@@ -407,6 +416,67 @@ function serializePhoneAppList(uid: string, list: PhoneAppList, includeCreatedAt
   return { id, payload };
 }
 
+function serializeTaskTemplate(uid: string, template: TaskTemplate, includeCreatedAt: boolean) {
+  const clean = sanitizeTaskTemplate(template);
+  const id = sanitizeDocId(clean.id, 'tpl');
+
+  const serializedItems = clean.items.slice(0, 40).map((it, idx) => {
+    const itemId = sanitizeDocId(it.id || `tpl-item-${idx}`, 'tpl-item');
+    const rec = normalizeRecurrence(it.recurrence);
+    const out: Record<string, unknown> = {
+      id: itemId,
+      title: trunc(it.title, 300, 'مهمة').trim() || 'مهمة',
+      category: it.category,
+      priority: it.priority,
+      energyRequired: it.energyRequired,
+    };
+    if (it.description && it.description.trim()) {
+      out.description = trunc(it.description.trim(), 1000);
+    }
+    if (it.estimatedMinutes !== undefined && Number(it.estimatedMinutes) > 0) {
+      out.estimatedMinutes = Math.round(clampNum(it.estimatedMinutes, 1, 1440, 30));
+    }
+    if (it.dueTime && it.dueTime.trim()) {
+      out.dueTime = trunc(it.dueTime.trim(), 16);
+    }
+    if (Array.isArray(it.tags) && it.tags.length > 0) {
+      out.tags = sanitizeTaskTags(it.tags);
+    }
+    if (Array.isArray(it.subtasks) && it.subtasks.length > 0) {
+      out.subtasks = it.subtasks
+        .map((s) => trunc(String(s).trim(), 200))
+        .filter(Boolean)
+        .slice(0, 30);
+    }
+    if (rec) {
+      out.recurrence = rec;
+    }
+    return out;
+  });
+
+  const payload: Record<string, unknown> = {
+    id,
+    ownerId: uid,
+    name: trunc(clean.name, 160, 'قالب مهام').trim() || 'قالب مهام',
+    icon: trunc(clean.icon, 32, '📋') || '📋',
+    color: clean.color,
+    defaultCategory: clean.defaultCategory,
+    items: serializedItems,
+    usageCount: Math.round(clampNum(clean.usageCount ?? 0, 0, 1000000, 0)),
+    clientCreatedAt: trunc(clean.createdAt, 64, new Date().toISOString()),
+    updatedAt: serverTimestamp(),
+  };
+
+  if (includeCreatedAt) {
+    payload.createdAt = serverTimestamp();
+  }
+  if (clean.description && clean.description.trim()) {
+    payload.description = trunc(clean.description.trim(), 500);
+  }
+
+  return { id, payload, hasDescription: Boolean(clean.description && clean.description.trim()) };
+}
+
 export async function ensureUserWorkspace(
   uid: string,
   localData: LocalWorkspaceSnapshot
@@ -472,6 +542,10 @@ async function pushCollectionsInBatch(uid: string, data: LocalWorkspaceSnapshot)
     const { id, payload } = serializePhoneAppList(uid, l, true);
     batch.set(doc(db, 'users', uid, 'phoneAppLists', id), payload);
   }
+  for (const tpl of data.taskTemplates || []) {
+    const { id, payload } = serializeTaskTemplate(uid, tpl, true);
+    batch.set(doc(db, 'users', uid, 'taskTemplates', id), payload);
+  }
 
   await batch.commit();
 }
@@ -524,6 +598,7 @@ export async function pushLocalSnapshotToCloud(
       'quranRoutine',
       'customWidgets',
       'phoneAppLists',
+      'taskTemplates',
     ] as const;
 
     const deleteBatch = writeBatch(db);
@@ -555,6 +630,7 @@ export interface CloudSyncCallbacks {
   onQuranRoutine: (items: QuranRoutineItem[]) => void;
   onCustomWidgets: (widgets: CustomDashboardWidget[]) => void;
   onPhoneAppLists: (lists: PhoneAppList[]) => void;
+  onTaskTemplates: (templates: TaskTemplate[]) => void;
   onSyncedPulse: () => void;
   onError: (err: unknown) => void;
 }
@@ -622,6 +698,7 @@ export function subscribeUserCloudData(
             completedAt: data.completedAt,
             goalId: data.goalId,
             ...(data.locationReminder ? { locationReminder: data.locationReminder } : {}),
+            ...(data.recurrence ? { recurrence: normalizeRecurrence(data.recurrence) } : {}),
           };
         });
         list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -780,6 +857,36 @@ export function subscribeUserCloudData(
     )
   );
 
+  const templatesPath = `users/${uid}/taskTemplates`;
+  unsubscribers.push(
+    onSnapshot(
+      query(collection(db, 'users', uid, 'taskTemplates'), where('ownerId', '==', uid)),
+      (snap) => {
+        const list: TaskTemplate[] = snap.docs.map((d) => {
+          const data = d.data();
+          return sanitizeTaskTemplate({
+            id: data.id || d.id,
+            name: data.name,
+            description: data.description,
+            icon: data.icon,
+            color: data.color,
+            defaultCategory: data.defaultCategory,
+            items: Array.isArray(data.items) ? data.items : [],
+            createdAt: data.clientCreatedAt || new Date().toISOString(),
+            usageCount: typeof data.usageCount === 'number' ? data.usageCount : 0,
+          });
+        });
+        list.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+        callbacks.onTaskTemplates(list);
+        callbacks.onSyncedPulse();
+      },
+      (error) => {
+        callbacks.onError(error);
+        handleFirestoreError(error, OperationType.LIST, templatesPath);
+      }
+    )
+  );
+
   return () => {
     unsubscribers.forEach((unsub) => unsub());
   };
@@ -834,6 +941,9 @@ export async function upsertTaskDoc(uid: string, task: Task, isNew: boolean): Pr
       delete updatePayload.clientCreatedAt;
       if (!task.locationReminder) {
         updatePayload.locationReminder = deleteField();
+      }
+      if (!normalizeRecurrence(task.recurrence)) {
+        updatePayload.recurrence = deleteField();
       }
       await updateDoc(doc(db, 'users', uid, 'tasks', id), updatePayload);
     }
@@ -1057,6 +1167,41 @@ export async function deletePhoneAppListDoc(uid: string, listId: string): Promis
   const path = `users/${uid}/phoneAppLists/${id}`;
   try {
     await deleteDoc(doc(db, 'users', uid, 'phoneAppLists', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function upsertTaskTemplateDoc(
+  uid: string,
+  template: TaskTemplate,
+  isNew: boolean
+): Promise<void> {
+  const { id, payload, hasDescription } = serializeTaskTemplate(uid, template, isNew);
+  const path = `users/${uid}/taskTemplates/${id}`;
+  try {
+    if (isNew) {
+      await setDoc(doc(db, 'users', uid, 'taskTemplates', id), payload);
+    } else {
+      const updatePayload: Record<string, unknown> = { ...payload };
+      delete updatePayload.id;
+      delete updatePayload.ownerId;
+      delete updatePayload.clientCreatedAt;
+      if (!hasDescription) {
+        updatePayload.description = deleteField();
+      }
+      await updateDoc(doc(db, 'users', uid, 'taskTemplates', id), updatePayload);
+    }
+  } catch (error) {
+    handleFirestoreError(error, isNew ? OperationType.CREATE : OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteTaskTemplateDoc(uid: string, templateId: string): Promise<void> {
+  const id = sanitizeDocId(templateId, 'tpl');
+  const path = `users/${uid}/taskTemplates/${id}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'taskTemplates', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }

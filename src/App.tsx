@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BellOff, Bot, ChevronLeft, ChevronRight, Sparkles, X } from 'lucide-react';
+import { BellOff, Bot, CalendarClock, ChevronLeft, ChevronRight, Repeat, Sparkles, X } from 'lucide-react';
 import { 
   defaultProfile, 
   defaultTasks, 
@@ -21,9 +21,21 @@ import {
   PhoneAppShortcut,
   SavedLocation,
   TaskTag,
-  TaskTagColor
+  TaskTagColor,
+  TaskTemplate
 } from './types';
 import { DEFAULT_TASK_TAGS, normalizeTagName, TASK_TAG_COLOR_OPTIONS } from './utils/taskTags';
+import {
+  buildTasksFromTemplate,
+  DEFAULT_TASK_TEMPLATES,
+  sanitizeTaskTemplate,
+  type ApplyTemplateOptions,
+} from './utils/taskTemplates';
+import {
+  buildNextRecurringTask,
+  formatRecurrenceLabelAr,
+  normalizeRecurrence,
+} from './utils/taskRecurrence';
 import { DEFAULT_DASHBOARD_LAYOUT, INITIAL_PHONE_APP_LISTS } from './data/dashboardDefaults';
 import { normalizeLegacyPhoneAppIcon } from './components/PhoneAppIcon';
 import { Navbar, type AppNavTab } from './components/Navbar';
@@ -89,6 +101,7 @@ import {
   deleteQuranDoc,
   deleteScheduleBlockDoc,
   deleteTaskDoc,
+  deleteTaskTemplateDoc,
   ensureUserWorkspace,
   pushLocalSnapshotToCloud,
   replaceScheduleCollection,
@@ -102,6 +115,7 @@ import {
   upsertQuranDoc,
   upsertScheduleBlockDoc,
   upsertTaskDoc,
+  upsertTaskTemplateDoc,
   type LocalWorkspaceSnapshot,
 } from './utils/firestoreSync';
 import {
@@ -141,6 +155,7 @@ const STORAGE_KEYS = {
   SAVED_LOCATIONS: 'digital_twin_saved_locations_v1',
   LOCATION_TRACKING: 'digital_twin_location_tracking_v1',
   CUSTOM_TAGS: 'digital_twin_custom_tags_v1',
+  TASK_TEMPLATES: 'digital_twin_task_templates_v1',
   TWIN_TOP_MIGRATED: 'digital_twin_twin_top_migrated_v1',
   TWIN_TOP_CLOUD_MIGRATED: 'digital_twin_twin_top_cloud_migrated_v1',
 };
@@ -360,6 +375,18 @@ export default function App() {
     }
   });
 
+  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.TASK_TEMPLATES);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed)
+        ? parsed.map((tpl) => sanitizeTaskTemplate(tpl))
+        : DEFAULT_TASK_TEMPLATES;
+    } catch {
+      return DEFAULT_TASK_TEMPLATES;
+    }
+  });
+
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
 
   // 2. Navigation Tab state (synced with URL hash routes e.g. #/notifications)
@@ -417,6 +444,20 @@ export default function App() {
   // 4. AI Schedule Optimization state
   const [isOptimizingSchedule, setIsOptimizingSchedule] = useState(false);
   const [optimizeScheduleError, setOptimizeScheduleError] = useState<string | null>(null);
+  const [recurringRegenNotice, setRecurringRegenNotice] = useState<{
+    id: string;
+    title: string;
+    nextDueDate: string;
+    label: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!recurringRegenNotice) return;
+    const timer = window.setTimeout(() => {
+      setRecurringRegenNotice(null);
+    }, 6500);
+    return () => window.clearTimeout(timer);
+  }, [recurringRegenNotice]);
   const [optimizationResult, setOptimizationResult] = useState<{
     summary: string;
     energyStrategy: string;
@@ -585,6 +626,14 @@ export default function App() {
   }, [customTags]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.TASK_TEMPLATES, JSON.stringify(taskTemplates));
+    } catch {
+      // ignore
+    }
+  }, [taskTemplates]);
+
+  useEffect(() => {
     const handleQuotaExceeded = () => setMapsQuotaExceeded(true);
     window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
     return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
@@ -604,6 +653,7 @@ export default function App() {
     savedLocations,
     locationTrackingEnabled,
     customTags,
+    taskTemplates,
     quranNotificationsEnabled,
     pushEnabled,
     soundEnabled,
@@ -623,6 +673,7 @@ export default function App() {
     savedLocations,
     locationTrackingEnabled,
     customTags,
+    taskTemplates,
     quranNotificationsEnabled,
     pushEnabled,
     soundEnabled,
@@ -698,6 +749,7 @@ export default function App() {
           onQuranRoutine: (cloudQuran) => setQuranRoutine(cloudQuran),
           onCustomWidgets: (cloudWidgets) => setCustomWidgets(cloudWidgets),
           onPhoneAppLists: (cloudLists) => setPhoneAppLists(normalizePhoneAppLists(cloudLists)),
+          onTaskTemplates: (cloudTemplates) => setTaskTemplates(cloudTemplates),
           onSyncedPulse: () => {
             setCloudSyncStatus('synced');
             setLastSyncedAt(
@@ -870,6 +922,7 @@ export default function App() {
         localStorage.removeItem(STORAGE_KEYS.SAVED_LOCATIONS);
         localStorage.removeItem(STORAGE_KEYS.LOCATION_TRACKING);
         localStorage.removeItem(STORAGE_KEYS.CUSTOM_TAGS);
+        localStorage.removeItem(STORAGE_KEYS.TASK_TEMPLATES);
         localStorage.removeItem(ADHKAR_STORAGE_KEY);
       } catch {
         // ignore storage cleanup errors
@@ -885,6 +938,7 @@ export default function App() {
       setSavedLocations([]);
       setLocationTrackingEnabled(false);
       setCustomTags(DEFAULT_TASK_TAGS);
+      setTaskTemplates(DEFAULT_TASK_TEMPLATES);
       setLocationReminders([]);
       setCurrentGeoCoords(null);
       setGeoError(null);
@@ -1155,34 +1209,81 @@ export default function App() {
   const totalCompleted = completedTasks.length + completedBlocks.length;
   const syncScore = totalItems > 0 ? Math.min(100, Math.round((totalCompleted / totalItems) * 85) + 15) : 90;
 
+  // Helper: regenerate the next recurring occurrence when a task transitions to completed
+  const resolveTaskCompletionTransition = (
+    prevTask: Task | undefined,
+    candidateTask: Task
+  ): {
+    primaryTask: Task;
+    generatedTask: Task | null;
+    nextDueDate: string | null;
+  } => {
+    const transitionedToCompleted =
+      Boolean(prevTask && prevTask.status !== 'completed') &&
+      candidateTask.status === 'completed';
+
+    if (!transitionedToCompleted) {
+      return { primaryTask: candidateTask, generatedTask: null, nextDueDate: null };
+    }
+
+    const regen = buildNextRecurringTask(candidateTask);
+    if (!regen) {
+      return { primaryTask: candidateTask, generatedTask: null, nextDueDate: null };
+    }
+
+    return {
+      primaryTask: regen.updatedCompletedTask,
+      generatedTask: regen.nextTask,
+      nextDueDate: regen.nextDueDate,
+    };
+  };
+
   // Handlers for Tasks
   const handleToggleTask = (taskId: string) => {
-    let updatedTask: Task | null = null;
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId) {
-          const willBeCompleted = t.status !== 'completed';
-          if (willBeCompleted) {
-            soundEngine.playChime(true);
-            confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 } });
-          }
-          updatedTask = {
-            ...t,
-            status: willBeCompleted ? 'completed' : 'todo',
-            completedAt: willBeCompleted ? new Date().toISOString() : '',
-          };
-          return updatedTask;
-        }
-        return t;
-      })
-    );
-    if (updatedTask) {
-      const target = updatedTask;
-      void runCloudMutation((uid) => upsertTaskDoc(uid, target, false));
+    const prevTask = tasks.find((t) => t.id === taskId);
+    if (!prevTask) return;
+
+    const willBeCompleted = prevTask.status !== 'completed';
+    if (willBeCompleted) {
+      soundEngine.playChime(true);
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 } });
     }
+
+    const candidate: Task = {
+      ...prevTask,
+      status: willBeCompleted ? 'completed' : 'todo',
+      completedAt: willBeCompleted ? new Date().toISOString() : '',
+    };
+
+    const { primaryTask, generatedTask, nextDueDate } = resolveTaskCompletionTransition(
+      prevTask,
+      candidate
+    );
+
+    setTasks((prev) => {
+      const mapped = prev.map((t) => (t.id === taskId ? primaryTask : t));
+      return generatedTask ? [generatedTask, ...mapped] : mapped;
+    });
+
+    if (generatedTask && nextDueDate) {
+      setRecurringRegenNotice({
+        id: generatedTask.id,
+        title: generatedTask.title,
+        nextDueDate,
+        label: formatRecurrenceLabelAr(generatedTask.recurrence),
+      });
+    }
+
+    void runCloudMutation(async (uid) => {
+      await upsertTaskDoc(uid, primaryTask, false);
+      if (generatedTask) {
+        await upsertTaskDoc(uid, generatedTask, true);
+      }
+    });
   };
 
   const handleAddTask = (newTask: Partial<Task>) => {
+    const normalizedRecurrence = normalizeRecurrence(newTask.recurrence);
     const task: Task = {
       id: `task-${Date.now()}`,
       title: newTask.title || 'مهمة جديدة',
@@ -1200,6 +1301,7 @@ export default function App() {
       isUnclassified: Boolean(newTask.isUnclassified),
       ...(Array.isArray(newTask.tags) && newTask.tags.length > 0 ? { tags: newTask.tags } : {}),
       ...(newTask.locationReminder ? { locationReminder: newTask.locationReminder } : {}),
+      ...(normalizedRecurrence ? { recurrence: normalizedRecurrence } : {}),
     };
     setTasks((prev) => [task, ...prev]);
     soundEngine.playChime(true);
@@ -1207,8 +1309,51 @@ export default function App() {
   };
 
   const handleUpdateTask = (updatedTask: Task) => {
-    setTasks((prev) => prev.map((t) => (t.id === updatedTask.id ? updatedTask : t)));
-    void runCloudMutation((uid) => upsertTaskDoc(uid, updatedTask, false));
+    const prevTask = tasks.find((t) => t.id === updatedTask.id);
+    const normalizedRecurrence = normalizeRecurrence(updatedTask.recurrence);
+    const { recurrence: _ignoredRecurrence, ...restTask } = updatedTask;
+    const transitionedToCompleted =
+      Boolean(prevTask && prevTask.status !== 'completed') &&
+      updatedTask.status === 'completed';
+
+    const cleanUpdated: Task = {
+      ...restTask,
+      ...(normalizedRecurrence ? { recurrence: normalizedRecurrence } : {}),
+      ...(transitionedToCompleted
+        ? { completedAt: updatedTask.completedAt || new Date().toISOString() }
+        : {}),
+    };
+
+    if (transitionedToCompleted) {
+      soundEngine.playChime(true);
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 } });
+    }
+
+    const { primaryTask, generatedTask, nextDueDate } = resolveTaskCompletionTransition(
+      prevTask,
+      cleanUpdated
+    );
+
+    setTasks((prev) => {
+      const mapped = prev.map((t) => (t.id === updatedTask.id ? primaryTask : t));
+      return generatedTask ? [generatedTask, ...mapped] : mapped;
+    });
+
+    if (generatedTask && nextDueDate) {
+      setRecurringRegenNotice({
+        id: generatedTask.id,
+        title: generatedTask.title,
+        nextDueDate,
+        label: formatRecurrenceLabelAr(generatedTask.recurrence),
+      });
+    }
+
+    void runCloudMutation(async (uid) => {
+      await upsertTaskDoc(uid, primaryTask, false);
+      if (generatedTask) {
+        await upsertTaskDoc(uid, generatedTask, true);
+      }
+    });
   };
 
   const handleImportTasksBatch = (
@@ -1345,6 +1490,71 @@ export default function App() {
     });
   };
 
+  // Handlers for Reusable Task Templates
+  const handleCreateTaskTemplate = (
+    newTemplate: Omit<TaskTemplate, 'id' | 'createdAt'> & { id?: string }
+  ): TaskTemplate => {
+    const idCollision = newTemplate.id && taskTemplates.some((t) => t.id === newTemplate.id);
+    const created = sanitizeTaskTemplate({
+      ...newTemplate,
+      id:
+        newTemplate.id && !idCollision
+          ? newTemplate.id
+          : `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      usageCount: newTemplate.usageCount ?? 0,
+    });
+    setTaskTemplates((prev) => [...prev, created]);
+    soundEngine.playChime(true);
+    void runCloudMutation((uid) => upsertTaskTemplateDoc(uid, created, true));
+    return created;
+  };
+
+  const handleUpdateTaskTemplate = (updatedTemplate: TaskTemplate) => {
+    const clean = sanitizeTaskTemplate(updatedTemplate);
+    setTaskTemplates((prev) => prev.map((t) => (t.id === clean.id ? clean : t)));
+    soundEngine.playChime(true);
+    void runCloudMutation((uid) => upsertTaskTemplateDoc(uid, clean, false));
+  };
+
+  const handleDeleteTaskTemplate = (templateId: string) => {
+    setTaskTemplates((prev) => prev.filter((t) => t.id !== templateId));
+    void runCloudMutation((uid) => deleteTaskTemplateDoc(uid, templateId));
+  };
+
+  const handleApplyTaskTemplate = (
+    template: TaskTemplate,
+    options: ApplyTemplateOptions
+  ): number => {
+    const createdTasks = buildTasksFromTemplate(template, options);
+    if (createdTasks.length === 0) return 0;
+
+    setTasks((prev) => [...createdTasks, ...prev]);
+
+    const existingTpl = taskTemplates.find((t) => t.id === template.id);
+    const bumpedTemplate: TaskTemplate | null = existingTpl
+      ? { ...existingTpl, usageCount: (existingTpl.usageCount || 0) + 1 }
+      : null;
+
+    if (bumpedTemplate) {
+      setTaskTemplates((prev) =>
+        prev.map((t) => (t.id === bumpedTemplate.id ? bumpedTemplate : t))
+      );
+    }
+
+    soundEngine.playChime(true);
+    confetti({ particleCount: 55, spread: 70, origin: { y: 0.7 } });
+
+    void runCloudMutation(async (uid) => {
+      await batchCreateTasksDocs(uid, createdTasks);
+      if (bumpedTemplate) {
+        await upsertTaskTemplateDoc(uid, bumpedTemplate, false);
+      }
+    });
+
+    return createdTasks.length;
+  };
+
   const handleAutoClassifyTasks = async (
     tasksToClassify: Task[]
   ): Promise<{ count: number; summary: string }> => {
@@ -1392,28 +1602,55 @@ export default function App() {
   };
 
   const handleToggleSubtask = (taskId: string, subtaskId: string) => {
-    let updatedTask: Task | null = null;
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === taskId && t.subtasks) {
-          const updatedSubtasks = t.subtasks.map((st) =>
-            st.id === subtaskId ? { ...st, completed: !st.completed } : st
-          );
-          const allCompleted = updatedSubtasks.every((st) => st.completed);
-          updatedTask = {
-            ...t,
-            subtasks: updatedSubtasks,
-            status: allCompleted ? 'completed' : t.status,
-          };
-          return updatedTask;
-        }
-        return t;
-      })
+    const prevTask = tasks.find((t) => t.id === taskId);
+    if (!prevTask || !prevTask.subtasks) return;
+
+    const updatedSubtasks = prevTask.subtasks.map((st) =>
+      st.id === subtaskId ? { ...st, completed: !st.completed } : st
     );
-    if (updatedTask) {
-      const target = updatedTask;
-      void runCloudMutation((uid) => upsertTaskDoc(uid, target, false));
+    const allCompleted =
+      updatedSubtasks.length > 0 && updatedSubtasks.every((st) => st.completed);
+
+    const transitionedToCompleted = prevTask.status !== 'completed' && allCompleted;
+    if (transitionedToCompleted) {
+      soundEngine.playChime(true);
+      confetti({ particleCount: 60, spread: 70, origin: { y: 0.7 } });
     }
+
+    const candidate: Task = {
+      ...prevTask,
+      subtasks: updatedSubtasks,
+      status: allCompleted ? 'completed' : prevTask.status,
+      ...(transitionedToCompleted
+        ? { completedAt: prevTask.completedAt || new Date().toISOString() }
+        : {}),
+    };
+
+    const { primaryTask, generatedTask, nextDueDate } = resolveTaskCompletionTransition(
+      prevTask,
+      candidate
+    );
+
+    setTasks((prev) => {
+      const mapped = prev.map((t) => (t.id === taskId ? primaryTask : t));
+      return generatedTask ? [generatedTask, ...mapped] : mapped;
+    });
+
+    if (generatedTask && nextDueDate) {
+      setRecurringRegenNotice({
+        id: generatedTask.id,
+        title: generatedTask.title,
+        nextDueDate,
+        label: formatRecurrenceLabelAr(generatedTask.recurrence),
+      });
+    }
+
+    void runCloudMutation(async (uid) => {
+      await upsertTaskDoc(uid, primaryTask, false);
+      if (generatedTask) {
+        await upsertTaskDoc(uid, generatedTask, true);
+      }
+    });
   };
 
   const handleApplySubtasks = (taskId: string, subtasks: any[]) => {
@@ -1997,6 +2234,7 @@ export default function App() {
       savedLocations,
       locationTrackingEnabled,
       customTags,
+      taskTemplates,
       exportedAt: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
@@ -2015,6 +2253,9 @@ export default function App() {
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
+        const importedTemplates = Array.isArray(parsed.taskTemplates)
+          ? parsed.taskTemplates.map((tpl: Partial<TaskTemplate>) => sanitizeTaskTemplate(tpl))
+          : null;
         const nextSnapshot: LocalWorkspaceSnapshot = {
           ...latestSnapshotRef.current,
           ...(parsed.profile ? { profile: parsed.profile } : {}),
@@ -2034,6 +2275,7 @@ export default function App() {
           ...(Array.isArray(parsed.customTags)
             ? { customTags: parsed.customTags }
             : {}),
+          ...(importedTemplates ? { taskTemplates: importedTemplates } : {}),
         };
         if (parsed.profile) setProfile(parsed.profile);
         if (parsed.tasks) setTasks(parsed.tasks);
@@ -2049,6 +2291,9 @@ export default function App() {
         }
         if (Array.isArray(parsed.customTags)) {
           setCustomTags(parsed.customTags);
+        }
+        if (importedTemplates) {
+          setTaskTemplates(importedTemplates);
         }
         soundEngine.playChime(true);
         void runCloudMutation((uid) => pushLocalSnapshotToCloud(uid, nextSnapshot));
@@ -2074,6 +2319,7 @@ export default function App() {
         savedLocations: [],
         locationTrackingEnabled: false,
         customTags: DEFAULT_TASK_TAGS,
+        taskTemplates: DEFAULT_TASK_TEMPLATES,
         quranNotificationsEnabled: true,
         pushEnabled: true,
         soundEnabled: true,
@@ -2090,6 +2336,7 @@ export default function App() {
       setSavedLocations([]);
       setLocationTrackingEnabled(false);
       setCustomTags(DEFAULT_TASK_TAGS);
+      setTaskTemplates(DEFAULT_TASK_TEMPLATES);
       setLocationReminders([]);
       setCurrentGeoCoords(null);
       setGeoDistances({});
@@ -2723,6 +2970,11 @@ export default function App() {
             customTags={customTags}
             onCreateCustomTag={handleCreateCustomTag}
             onDeleteCustomTag={handleDeleteCustomTag}
+            taskTemplates={taskTemplates}
+            onCreateTaskTemplate={handleCreateTaskTemplate}
+            onUpdateTaskTemplate={handleUpdateTaskTemplate}
+            onDeleteTaskTemplate={handleDeleteTaskTemplate}
+            onApplyTaskTemplate={handleApplyTaskTemplate}
           />
         )}
 
@@ -2978,6 +3230,46 @@ export default function App() {
         onReviewTomorrowSchedule={handleReviewTomorrowSchedule}
         onRebalanceWithTwin={handleRebalanceTomorrowWithTwin}
       />
+
+      {/* Recurring Task Auto-Regeneration Confirmation Toast */}
+      {recurringRegenNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-40 max-w-sm rounded-2xl border border-indigo-400/40 bg-slate-900/95 backdrop-blur-md px-4 py-3 shadow-2xl shadow-indigo-950/50 text-right animate-fadeIn"
+        >
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center shrink-0 mt-0.5">
+              <Repeat className="w-4 h-4 text-indigo-300" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-indigo-200">
+                تمت جدولة التكرار التالي تلقائياً
+              </p>
+              <p className="text-xs text-white font-semibold truncate mt-0.5">
+                {recurringRegenNotice.title}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-300">
+                <span className="inline-flex items-center gap-1 text-cyan-300 font-medium">
+                  <CalendarClock className="w-3 h-3" />
+                  {recurringRegenNotice.nextDueDate}
+                </span>
+                {recurringRegenNotice.label && (
+                  <span className="text-slate-400">• {recurringRegenNotice.label}</span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRecurringRegenNotice(null)}
+              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 shrink-0 cursor-pointer"
+              title="إغلاق"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Floating Digital AI Assistant Button */}
       {!isChatOpen && !isFocusOpen && currentTab !== 'focus' && (

@@ -126,6 +126,27 @@ service cloud.firestore {
         && tag.color is string && tag.color in ['cyan', 'emerald', 'amber', 'rose', 'purple', 'blue'];
     }
 
+    function isValidTaskRecurrenceMap(rec) {
+      return rec is map
+        && rec.keys().hasAll(['enabled', 'frequency', 'interval'])
+        && rec.keys().hasOnly([
+          'enabled', 'frequency', 'interval', 'daysOfWeek',
+          'endDate', 'seriesId', 'occurrenceCount', 'regeneratedNextId'
+        ])
+        && rec.enabled is bool && rec.enabled == true
+        && rec.frequency is string && rec.frequency in ['daily', 'weekly', 'monthly']
+        && (rec.interval is int || rec.interval is float) && rec.interval >= 1 && rec.interval <= 365
+        && (!('daysOfWeek' in rec) || (
+          rec.daysOfWeek is list
+          && rec.daysOfWeek.size() <= 7
+          && (rec.daysOfWeek.size() == 0 || (rec.daysOfWeek[0] is int && rec.daysOfWeek[0] >= 0 && rec.daysOfWeek[0] <= 6))
+        ))
+        && isOptionalString(rec, 'endDate', 32)
+        && isOptionalString(rec, 'seriesId', 128)
+        && isOptionalIntRange(rec, 'occurrenceCount', 1, 100000)
+        && isOptionalString(rec, 'regeneratedNextId', 128);
+    }
+
     function isValidWorkspace(data, userId) {
       return data.keys().hasAll([
           'ownerId', 'profile', 'dashboardLayout', 'adhkarState',
@@ -171,7 +192,7 @@ service cloud.firestore {
           'id', 'ownerId', 'title', 'description', 'category', 'priority', 'status',
           'estimatedMinutes', 'dueDate', 'dueTime', 'energyRequired', 'subtasks', 'tags',
           'isTopPriority', 'isUnclassified', 'clientCreatedAt', 'completedAt', 'goalId',
-          'locationReminder', 'createdAt', 'updatedAt'
+          'locationReminder', 'recurrence', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id) && data.id == taskId
         && isValidId(data.ownerId) && data.ownerId == userId && data.ownerId == request.auth.uid
@@ -196,6 +217,7 @@ service cloud.firestore {
         && isOptionalString(data, 'completedAt', 64)
         && isOptionalString(data, 'goalId', 128)
         && (!('locationReminder' in data) || isValidLocationReminderMap(data.locationReminder))
+        && (!('recurrence' in data) || isValidTaskRecurrenceMap(data.recurrence))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -308,6 +330,58 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidTaskTemplateItemMap(item) {
+      return item is map
+        && item.keys().hasAll(['id', 'title', 'category', 'priority', 'energyRequired'])
+        && item.keys().hasOnly([
+          'id', 'title', 'description', 'category', 'priority',
+          'estimatedMinutes', 'energyRequired', 'dueTime', 'tags', 'subtasks', 'recurrence'
+        ])
+        && isValidId(item.id)
+        && item.title is string && item.title.size() >= 1 && item.title.size() <= 300
+        && isOptionalString(item, 'description', 1000)
+        && item.category is string && item.category in ['work', 'personal', 'health', 'study', 'urgent']
+        && item.priority is string && item.priority in ['high', 'medium', 'low']
+        && isOptionalIntRange(item, 'estimatedMinutes', 1, 1440)
+        && item.energyRequired is string && item.energyRequired in ['high', 'medium', 'low']
+        && isOptionalString(item, 'dueTime', 16)
+        && (!('tags' in item) || (
+          item.tags is list
+          && item.tags.size() <= 15
+          && (item.tags.size() == 0 || (item.tags[0] is string && item.tags[0].size() >= 1 && item.tags[0].size() <= 40))
+        ))
+        && (!('subtasks' in item) || (
+          item.subtasks is list
+          && item.subtasks.size() <= 30
+          && (item.subtasks.size() == 0 || (item.subtasks[0] is string && item.subtasks[0].size() >= 1 && item.subtasks[0].size() <= 200))
+        ))
+        && (!('recurrence' in item) || isValidTaskRecurrenceMap(item.recurrence));
+    }
+
+    function isValidTaskTemplate(data, userId, templateId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'name', 'icon', 'color', 'defaultCategory',
+          'items', 'clientCreatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'name', 'description', 'icon', 'color', 'defaultCategory',
+          'items', 'usageCount', 'clientCreatedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == templateId
+        && isValidId(data.ownerId) && data.ownerId == userId && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && isOptionalString(data, 'description', 500)
+        && data.icon is string && data.icon.size() >= 1 && data.icon.size() <= 32
+        && data.color is string && data.color in ['cyan', 'emerald', 'amber', 'rose', 'purple', 'blue']
+        && data.defaultCategory is string && data.defaultCategory in ['work', 'personal', 'health', 'study', 'urgent']
+        && data.items is list && data.items.size() <= 40
+        && (data.items.size() == 0 || isValidTaskTemplateItemMap(data.items[0]))
+        && isOptionalIntRange(data, 'usageCount', 0, 1000000)
+        && data.clientCreatedAt is string && data.clientCreatedAt.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // User Workspace & Settings
     match /users/{userId} {
       allow get: if isOwner(userId);
@@ -358,15 +432,18 @@ service cloud.firestore {
           && incoming().updatedAt == request.time
           && (
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'recurrence', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['subtasks', 'status', 'completedAt', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['subtasks', 'status', 'completedAt', 'recurrence', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'isTopPriority', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['locationReminder', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['tags', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['recurrence', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly([
               'title', 'description', 'category', 'priority', 'status',
               'estimatedMinutes', 'dueDate', 'dueTime', 'energyRequired',
               'subtasks', 'tags', 'isTopPriority', 'isUnclassified', 'completedAt', 'goalId',
-              'locationReminder', 'updatedAt'
+              'locationReminder', 'recurrence', 'updatedAt'
             ])
           );
         allow delete: if isOwner(userId) && isValidId(taskId);
@@ -494,6 +571,32 @@ service cloud.firestore {
             ])
           );
         allow delete: if isOwner(userId) && isValidId(listId);
+      }
+
+      // Reusable Task Templates subcollection
+      match /taskTemplates/{templateId} {
+        allow get: if isOwner(userId) && isValidId(templateId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(templateId)
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && isValidTaskTemplate(incoming(), userId, templateId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId) && isValidId(templateId)
+          && isValidTaskTemplate(incoming(), userId, templateId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().clientCreatedAt == existing().clientCreatedAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['usageCount', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'description', 'icon', 'color', 'defaultCategory',
+              'items', 'usageCount', 'updatedAt'
+            ])
+          );
+        allow delete: if isOwner(userId) && isValidId(templateId);
       }
     }
   }

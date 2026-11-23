@@ -24,6 +24,7 @@ import {
   Edit3,
   Trash2,
   RotateCcw,
+  Repeat,
   Tag,
   X,
 } from 'lucide-react';
@@ -60,6 +61,7 @@ import { CustomDashboardWidgetCard } from './CustomDashboardWidgetCard';
 import { DashboardCustomizerModal } from './DashboardCustomizerModal';
 import { VoiceCommandPanel } from './VoiceCommandPanel';
 import { evaluateTaskUrgency } from '../utils/reminderEngine';
+import { formatRecurrenceLabelAr } from '../utils/taskRecurrence';
 import {
   evaluateCognitiveLoad,
   getSmartReschedulingSuggestions,
@@ -774,6 +776,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   <span className="flex items-center gap-1 text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded-md">
                                     <Clock className="w-3 h-3 text-cyan-400" />
                                     {task.estimatedMinutes} دقيقة
+                                  </span>
+                                )}
+
+                                {task.recurrence?.enabled && (
+                                  <span className="flex items-center gap-1 text-emerald-300 bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded-md font-medium">
+                                    <Repeat className="w-3 h-3 text-emerald-400 shrink-0" />
+                                    <span>{formatRecurrenceLabelAr(task.recurrence)}</span>
                                   </span>
                                 )}
 

@@ -45,6 +45,47 @@ export interface TaskTag {
   color: TaskTagColor;
 }
 
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly';
+
+export interface TaskRecurrence {
+  enabled: boolean;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  daysOfWeek?: number[]; // 0 (Sunday) .. 6 (Saturday)
+  endDate?: string; // YYYY-MM-DD
+  seriesId?: string;
+  occurrenceCount?: number;
+  regeneratedNextId?: string;
+}
+
+export type TaskTemplateColor = 'cyan' | 'emerald' | 'amber' | 'rose' | 'purple' | 'blue';
+
+export interface TaskTemplateItem {
+  id: string;
+  title: string;
+  description?: string;
+  category: TaskCategory;
+  priority: Priority;
+  estimatedMinutes?: number;
+  energyRequired: 'high' | 'medium' | 'low';
+  dueTime?: string;
+  tags?: string[];
+  subtasks?: string[];
+  recurrence?: TaskRecurrence;
+}
+
+export interface TaskTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  icon: string;
+  color: TaskTemplateColor;
+  defaultCategory: TaskCategory;
+  items: TaskTemplateItem[];
+  createdAt: string;
+  usageCount?: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -65,6 +106,7 @@ export interface Task {
   suggestedPostpone?: boolean;
   isUnclassified?: boolean;
   locationReminder?: TaskLocationReminder;
+  recurrence?: TaskRecurrence;
 }
 
 export interface TimeBlock {

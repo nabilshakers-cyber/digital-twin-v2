@@ -31,8 +31,11 @@ import {
   Undo2,
   MapPin,
   FileSpreadsheet,
+  Repeat,
+  Layers,
+  BookmarkPlus,
 } from 'lucide-react';
-import { Task, Priority, TaskCategory, TaskStatus, SavedLocation, TaskLocationReminder, TaskTag, TaskTagColor } from '../types';
+import { Task, Priority, TaskCategory, TaskStatus, SavedLocation, TaskTag, TaskTagColor, TaskTemplate } from '../types';
 import { FRIENDLY_AI_CONNECTION_ERROR } from '../utils/api';
 import { evaluateTaskUrgency } from '../utils/reminderEngine';
 import {
@@ -40,17 +43,20 @@ import {
   getTomorrowDateString,
 } from '../utils/burnoutEngine';
 import { formatDistanceArabic } from '../utils/geofencing';
+import { formatRecurrenceLabelAr } from '../utils/taskRecurrence';
+import { ApplyTemplateOptions } from '../utils/taskTemplates';
 import {
   getTagStyleByColor,
   getTagStyleForName,
   mergeAvailableTags,
   normalizeTagName,
-  TASK_TAG_COLOR_OPTIONS,
 } from '../utils/taskTags';
 import { useScheduledReminders } from '../utils/localNotifications';
 import { ReminderPickerTarget, ReminderTimePickerModal } from './ReminderTimePickerModal';
 import { LocationPickerModal } from './LocationPickerModal';
 import { CsvTaskImportModal } from './CsvTaskImportModal';
+import { TaskEditModal } from './TaskEditModal';
+import { TaskTemplatesModal } from './TaskTemplatesModal';
 import { broadcastCloseAllModals } from '../utils/modalCoordinator';
 import { SwipeableTaskCard, SwipeOpenSide } from './SwipeableTaskCard';
 
@@ -77,6 +83,11 @@ interface TasksHubViewProps {
   customTags?: TaskTag[];
   onCreateCustomTag?: (name: string, color?: TaskTagColor) => TaskTag | null;
   onDeleteCustomTag?: (tagId: string) => void;
+  taskTemplates?: TaskTemplate[];
+  onCreateTaskTemplate?: (template: Omit<TaskTemplate, 'id' | 'createdAt'> & { id?: string }) => TaskTemplate;
+  onUpdateTaskTemplate?: (template: TaskTemplate) => void;
+  onDeleteTaskTemplate?: (templateId: string) => void;
+  onApplyTaskTemplate?: (template: TaskTemplate, options: ApplyTemplateOptions) => number;
 }
 
 export const TasksHubView: React.FC<TasksHubViewProps> = ({
@@ -99,6 +110,11 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   customTags = [],
   onCreateCustomTag,
   onDeleteCustomTag,
+  taskTemplates = [],
+  onCreateTaskTemplate,
+  onUpdateTaskTemplate,
+  onDeleteTaskTemplate,
+  onApplyTaskTemplate,
 }) => {
   const [viewMode, setViewMode] = useState<'list' | 'kanban' | 'eisenhower'>('list');
   const [searchQuery, setSearchQuery] = useState('');
@@ -109,6 +125,9 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   const [reminderTarget, setReminderTarget] = useState<ReminderPickerTarget | null>(null);
   const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
   const [csvImportSuccessMsg, setCsvImportSuccessMsg] = useState<string | null>(null);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [templateDraftTasks, setTemplateDraftTasks] = useState<Task[] | null>(null);
+  const [templateSuccessMsg, setTemplateSuccessMsg] = useState<string | null>(null);
   const scheduledReminders = useScheduledReminders();
 
   const openTaskReminderPicker = (task: Task) => {
@@ -125,26 +144,11 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
     });
   };
 
-  // Manual new / edit task state
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [newTitle, setNewTitle] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newPriority, setNewPriority] = useState<Priority>('medium');
-  const [newCategory, setNewCategory] = useState<TaskCategory>('work');
-  const [newStatus, setNewStatus] = useState<TaskStatus>('todo');
-  const [newMinutes, setNewMinutes] = useState<number>(30);
-  const [newDueDate, setNewDueDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [newDueTime, setNewDueTime] = useState<string>('');
-  const [newSubtasks, setNewSubtasks] = useState<{ id: string; title: string; completed: boolean }[]>([]);
-  const [draftSubtaskTitle, setDraftSubtaskTitle] = useState('');
-  const [newIsUnclassified, setNewIsUnclassified] = useState(false);
-  const [newLocationId, setNewLocationId] = useState<string>('');
-  const [newTags, setNewTags] = useState<string[]>([]);
-  const [draftCustomTagName, setDraftCustomTagName] = useState<string>('');
-  const [draftCustomTagColor, setDraftCustomTagColor] = useState<TaskTagColor>('cyan');
+  // Task Add / Edit Modal state
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [taskModalTarget, setTaskModalTarget] = useState<Task | null>(null);
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
-  const [titleError, setTitleError] = useState<string | null>(null);
+  const [createdLocationIdForModal, setCreatedLocationIdForModal] = useState<string | null>(null);
 
   // Auto-classify state
   const [isAutoClassifying, setIsAutoClassifying] = useState(false);
@@ -220,6 +224,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
       isUnclassified: taskToRestore.isUnclassified,
       tags: taskToRestore.tags,
       locationReminder: taskToRestore.locationReminder,
+      recurrence: taskToRestore.recurrence,
     });
   };
 
@@ -233,135 +238,19 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
   };
 
   const openAddTaskForm = () => {
-    setEditingTaskId(null);
-    setNewTitle('');
-    setNewDescription('');
-    setNewPriority('medium');
-    setNewCategory('work');
-    setNewStatus('todo');
-    setNewMinutes(30);
-    setNewDueDate(new Date().toISOString().split('T')[0]);
-    setNewDueTime('');
-    setNewSubtasks([]);
-    setDraftSubtaskTitle('');
-    setNewIsUnclassified(false);
-    setNewLocationId('');
-    setNewTags([]);
-    setDraftCustomTagName('');
-    setTitleError(null);
-    setIsFormOpen((v) => (editingTaskId ? true : !v));
+    broadcastCloseAllModals('task-edit-modal');
+    setTaskModalTarget(null);
+    setCreatedLocationIdForModal(null);
+    setTaskModalOpen(true);
   };
 
-  const closeTaskForm = () => {
-    setIsFormOpen(false);
-    setEditingTaskId(null);
-    setNewTitle('');
-    setNewDescription('');
-    setNewDueTime('');
-    setNewSubtasks([]);
-    setDraftSubtaskTitle('');
-    setNewIsUnclassified(false);
-    setNewLocationId('');
-    setNewTags([]);
-    setDraftCustomTagName('');
-    setTitleError(null);
-  };
-
-  const toggleFormTag = (tagName: string) => {
-    const clean = normalizeTagName(tagName);
-    if (!clean) return;
-    setNewTags((prev) => {
-      const exists = prev.some((t) => t.toLowerCase() === clean.toLowerCase());
-      if (exists) {
-        return prev.filter((t) => t.toLowerCase() !== clean.toLowerCase());
-      }
-      if (prev.length >= 15) return prev;
-      return [...prev, clean];
-    });
-  };
-
-  const handleCreateAndAssignTag = () => {
-    const clean = normalizeTagName(draftCustomTagName);
-    if (!clean) return;
-    if (onCreateCustomTag) {
-      onCreateCustomTag(clean, draftCustomTagColor);
-    }
-    setNewTags((prev) => {
-      if (prev.some((t) => t.toLowerCase() === clean.toLowerCase())) return prev;
-      if (prev.length >= 15) return prev;
-      return [...prev, clean];
-    });
-    setDraftCustomTagName('');
-  };
-
-  const handleSaveTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) {
-      setTitleError('يرجى كتابة عنوان المهمة أولاً.');
-      return;
-    }
-    setTitleError(null);
-
-    const matchedLocation = newLocationId
-      ? savedLocations.find((loc) => loc.id === newLocationId)
-      : undefined;
-    const builtLocationReminder: TaskLocationReminder | undefined = matchedLocation
-      ? {
-          locationId: matchedLocation.id,
-          locationName: matchedLocation.name,
-          lat: matchedLocation.lat,
-          lng: matchedLocation.lng,
-          radiusMeters: matchedLocation.radiusMeters,
-          enabled: true,
-          triggerOn: 'arrive',
-        }
-      : undefined;
-
-    if (editingTaskId) {
-      const existing = tasks.find((t) => t.id === editingTaskId);
-      if (existing) {
-        onUpdateTask({
-          ...existing,
-          title: newTitle.trim(),
-          description: newDescription.trim(),
-          priority: newPriority,
-          category: newCategory,
-          status: newStatus,
-          estimatedMinutes: Number(newMinutes) || 30,
-          dueDate: newDueDate || undefined,
-          dueTime: newDueTime || undefined,
-          energyRequired: newPriority === 'high' ? 'high' : newPriority === 'low' ? 'low' : 'medium',
-          isTopPriority: !newIsUnclassified && newPriority === 'high',
-          isUnclassified: newIsUnclassified,
-          subtasks: newSubtasks,
-          tags: newTags,
-          locationReminder: builtLocationReminder,
-          completedAt:
-            newStatus === 'completed'
-              ? existing.completedAt || new Date().toISOString()
-              : undefined,
-        });
-      }
-    } else {
-      onAddTask({
-        title: newTitle.trim(),
-        description: newDescription.trim(),
-        priority: newPriority,
-        category: newCategory,
-        estimatedMinutes: Number(newMinutes) || 30,
-        dueDate: newDueDate,
-        dueTime: newDueTime || undefined,
-        status: newStatus,
-        energyRequired: newPriority === 'high' ? 'high' : 'medium',
-        createdAt: new Date().toISOString(),
-        subtasks: newSubtasks,
-        tags: newTags,
-        isUnclassified: newIsUnclassified,
-        locationReminder: builtLocationReminder,
-      });
-    }
-
-    closeTaskForm();
+  const openEditTaskModal = (task: Task) => {
+    broadcastCloseAllModals('task-edit-modal');
+    setActiveSwipe(null);
+    setInlineEditingTaskId(null);
+    setTaskModalTarget(task);
+    setCreatedLocationIdForModal(null);
+    setTaskModalOpen(true);
   };
 
   const unclassifiedTasks = tasks.filter(
@@ -570,6 +459,26 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
 
             <button
               type="button"
+              id="btn-open-task-templates"
+              onClick={() => {
+                broadcastCloseAllModals('task-templates-modal');
+                setTemplateDraftTasks(null);
+                setIsTemplatesOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-950/70 hover:bg-indigo-900/70 text-indigo-200 border border-indigo-700/60 text-xs font-semibold transition-all cursor-pointer"
+              title="استخدام قوالب المهام الجاهزة أو حفظ قائمة مهام متكررة لإضافتها دفعة واحدة"
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+              <span>القوالب</span>
+              {taskTemplates.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-indigo-900/80 text-indigo-200 text-[10px] font-mono">
+                  {taskTemplates.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               id="btn-open-csv-import"
               onClick={() => {
                 broadcastCloseAllModals('csv-import-modal');
@@ -583,6 +492,23 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Task Template Applied Success Banner */}
+        {templateSuccessMsg && (
+          <div className="px-3.5 py-2.5 rounded-xl bg-indigo-950/60 border border-indigo-700/60 text-xs text-indigo-100 flex items-center justify-between gap-2 animate-fadeIn">
+            <span className="flex items-center gap-1.5 font-medium">
+              <CheckCircle2 className="w-4 h-4 text-indigo-300 shrink-0" />
+              <span>{templateSuccessMsg}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setTemplateSuccessMsg(null)}
+              className="text-indigo-300 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* CSV Import Success Banner */}
         {csvImportSuccessMsg && (
@@ -763,400 +689,31 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
             })}
           </div>
         )}
+
+        {/* Quick Save Filtered Tasks as Template action */}
+        {(normalizedQuery || categoryFilter !== 'all' || priorityFilter !== 'all' || tagFilter !== 'all') &&
+          filteredTasks.length > 0 && (
+            <div className="pt-2 border-t border-slate-800/70 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400">
+                تظهر حالياً <strong className="text-slate-200">{filteredTasks.length}</strong> مهمة مفلترة
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  broadcastCloseAllModals('task-templates-modal');
+                  setTemplateDraftTasks(filteredTasks.slice(0, 40));
+                  setIsTemplatesOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/70 border border-indigo-700/50 text-indigo-200 font-semibold cursor-pointer"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5 text-indigo-400" />
+                <span>حفظ المهام الظاهرة كقالب</span>
+              </button>
+            </div>
+          )}
       </div>
 
-      {/* Manual Task Add / Edit Form */}
-      {isFormOpen && (
-        <form
-          onSubmit={handleSaveTask}
-          noValidate
-          className="bg-slate-900 rounded-2xl border border-cyan-800/60 p-5 space-y-4 shadow-xl animate-fadeIn"
-        >
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              {editingTaskId ? (
-                <>
-                  <Edit3 className="w-4 h-4 text-cyan-400" />
-                  <span>تعديل المهمة</span>
-                </>
-              ) : (
-                <>
-                  <Plus className="w-4 h-4 text-cyan-400" />
-                  <span>إنشاء مهمة جديدة</span>
-                </>
-              )}
-            </h4>
-            <button
-              type="button"
-              onClick={closeTaskForm}
-              className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
-            >
-              إلغاء
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-slate-300">عنوان المهمة *</label>
-              <input
-                type="text"
-                placeholder="مثال: إنهاء مسودة الاتفاقية وإرسالها للمدير"
-                value={newTitle}
-                onChange={(e) => {
-                  setNewTitle(e.target.value);
-                  if (titleError && e.target.value.trim()) {
-                    setTitleError(null);
-                  }
-                }}
-                aria-invalid={Boolean(titleError)}
-                className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none transition-colors ${
-                  titleError
-                    ? 'border-rose-500/80 focus:border-rose-400'
-                    : 'border-slate-800 focus:border-cyan-500'
-                }`}
-              />
-              {titleError && (
-                <p
-                  role="alert"
-                  className="text-xs text-rose-300 bg-rose-950/50 border border-rose-700/60 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-semibold"
-                >
-                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>{titleError}</span>
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-slate-300">التفاصيل والملاحظات (اختياري)</label>
-              <textarea
-                rows={2}
-                placeholder="تفاصيل إضافية أو روابط وملاحظات مساعدة..."
-                value={newDescription}
-                onChange={(e) => setNewDescription(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 resize-none"
-              />
-            </div>
-
-            <div className="space-y-1.5 md:col-span-2">
-              <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={newIsUnclassified}
-                  onChange={(e) => setNewIsUnclassified(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
-                />
-                <span>إبقاء المهمة غير مصنفة (ليتم تصنيفها تلقائياً عبر زر «تصنيف تلقائي»)</span>
-              </label>
-            </div>
-
-            {!newIsUnclassified && (
-              <>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-300">التصنيف</label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as TaskCategory)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="work">عمل ومشاريع</option>
-                    <option value="personal">شخصي وعائلي</option>
-                    <option value="health">صحة ولياقة</option>
-                    <option value="study">تعلم وتطوير</option>
-                    <option value="urgent">طارئ</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-300">الأولوية</label>
-                  <select
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as Priority)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="high">عاجل وهام (قصوى)</option>
-                    <option value="medium">متوسط الأولوية</option>
-                    <option value="low">منخفض الأولوية</option>
-                  </select>
-                </div>
-              </>
-            )}
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">الحالة</label>
-              <select
-                value={newStatus}
-                onChange={(e) => setNewStatus(e.target.value as TaskStatus)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-              >
-                <option value="todo">قيد الانتظار</option>
-                <option value="in_progress">جاري العمل الآن</option>
-                <option value="completed">مكتملة</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">الوقت المتوقع (بالدقائق)</label>
-              <input
-                type="number"
-                min={5}
-                max={480}
-                value={newMinutes}
-                onChange={(e) => setNewMinutes(Number(e.target.value))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">تاريخ الاستحقاق</label>
-              <input
-                type="date"
-                value={newDueDate}
-                onChange={(e) => setNewDueDate(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">وقت الاستحقاق (للتنبيه الذكي)</label>
-              <input
-                type="time"
-                value={newDueTime}
-                onChange={(e) => setNewDueTime(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            {/* Optional Location-Based Reminder Selector */}
-            <div className="space-y-1.5 md:col-span-2 pt-2 border-t border-slate-800/70">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-cyan-400" />
-                <span>التذكير عند الوصول لموقع جغرافي (اختياري)</span>
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={newLocationId}
-                  onChange={(e) => setNewLocationId(e.target.value)}
-                  aria-label="اختيار موقع التذكير الجغرافي"
-                  className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                >
-                  <option value="">بدون تذكير جغرافي</option>
-                  {savedLocations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      عند الوصول إلى: {loc.name} (نطاق {formatDistanceArabic(loc.radiusMeters)})
-                    </option>
-                  ))}
-                </select>
-
-                {onSaveLocation && (
-                  <button
-                    type="button"
-                    onClick={() => setLocationPickerOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
-                  >
-                    <MapPin className="w-3.5 h-3.5" />
-                    <span>+ إضافة موقع جديد على الخريطة</span>
-                  </button>
-                )}
-              </div>
-              {newLocationId && !locationTrackingEnabled && (
-                <p className="text-[11px] text-amber-300/90">
-                  ملاحظة: فعّل «مراقبة الموقع» من صفحة الإشعارات ليتم تنبيهك تلقائياً فور وصولك لهذا الموقع.
-                </p>
-              )}
-            </div>
-
-            {/* Custom Tags / Labels Section */}
-            <div className="space-y-2 md:col-span-2 pt-2 border-t border-slate-800/70">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Tag className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>الوسوم والتصنيفات المخصصة (Tags / Labels)</span>
-                </label>
-                {newTags.length > 0 && (
-                  <span className="text-[11px] text-cyan-300 font-medium">
-                    تم تحديد {newTags.length} وسوم
-                  </span>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5">
-                {mergeAvailableTags(
-                  [...tasks, { id: 'draft', title: '', category: 'work', priority: 'medium', status: 'todo', energyRequired: 'medium', createdAt: '', tags: newTags }],
-                  customTags
-                ).map((tg) => {
-                  const isSelected = newTags.some(
-                    (t) => t.toLowerCase() === tg.name.toLowerCase()
-                  );
-                  const style = getTagStyleByColor(tg.color);
-                  const isSavedInCatalog = customTags.some((c) => c.id === tg.id);
-                  return (
-                    <div
-                      key={tg.id}
-                      className={`inline-flex items-center rounded-lg border text-xs font-semibold transition-all ${
-                        isSelected
-                          ? style.selectedClass
-                          : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleFormTag(tg.name)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 cursor-pointer"
-                      >
-                        <span className={`w-2 h-2 rounded-full ${style.dotClass}`} />
-                        <span>{tg.name}</span>
-                      </button>
-                      {isSavedInCatalog && onDeleteCustomTag && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteCustomTag(tg.id);
-                            setNewTags((prev) =>
-                              prev.filter((t) => t.toLowerCase() !== tg.name.toLowerCase())
-                            );
-                          }}
-                          className="pl-1.5 pr-1 py-1 opacity-60 hover:opacity-100 hover:text-rose-300 cursor-pointer"
-                          title={`حذف وسم ${tg.name}`}
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <input
-                  type="text"
-                  value={draftCustomTagName}
-                  onChange={(e) => setDraftCustomTagName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleCreateAndAssignTag();
-                    }
-                  }}
-                  placeholder="أنشئ وسماً جديداً (مثل: دراسة، مشروع التخرج، عائلة)..."
-                  aria-label="اسم الوسم المخصص الجديد"
-                  className="flex-1 min-w-[200px] bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                />
-                <div className="flex items-center gap-1" role="group" aria-label="لون الوسم">
-                  {TASK_TAG_COLOR_OPTIONS.map((cOpt) => (
-                    <button
-                      key={cOpt.value}
-                      type="button"
-                      onClick={() => setDraftCustomTagColor(cOpt.value)}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center border transition-transform cursor-pointer ${cOpt.dotClass} ${
-                        draftCustomTagColor === cOpt.value
-                          ? 'border-white scale-110 ring-2 ring-cyan-400/50'
-                          : 'border-slate-900 opacity-70 hover:opacity-100'
-                      }`}
-                      title={cOpt.label}
-                    />
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCreateAndAssignTag}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>إضافة وسم</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Subtasks inline manager */}
-            <div className="space-y-2 md:col-span-2 pt-2 border-t border-slate-800/70">
-              <label className="text-xs font-semibold text-slate-300 block">
-                الخطوات الفرعية (اختياري)
-              </label>
-              {newSubtasks.length > 0 && (
-                <div className="space-y-1.5">
-                  {newSubtasks.map((st, idx) => (
-                    <div key={st.id} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={st.title}
-                        onChange={(e) =>
-                          setNewSubtasks((prev) =>
-                            prev.map((row, rIdx) =>
-                              rIdx === idx ? { ...row, title: e.target.value } : row
-                            )
-                          )
-                        }
-                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setNewSubtasks((prev) => prev.filter((_, rIdx) => rIdx !== idx))
-                        }
-                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-300 cursor-pointer"
-                        title="حذف الخطوة"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="أضف خطوة فرعية..."
-                  value={draftSubtaskTitle}
-                  onChange={(e) => setDraftSubtaskTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      if (!draftSubtaskTitle.trim()) return;
-                      setNewSubtasks((prev) => [
-                        ...prev,
-                        { id: `sub-${Date.now()}`, title: draftSubtaskTitle.trim(), completed: false },
-                      ]);
-                      setDraftSubtaskTitle('');
-                    }
-                  }}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!draftSubtaskTitle.trim()) return;
-                    setNewSubtasks((prev) => [
-                      ...prev,
-                      { id: `sub-${Date.now()}`, title: draftSubtaskTitle.trim(), completed: false },
-                    ]);
-                    setDraftSubtaskTitle('');
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold cursor-pointer"
-                >
-                  + خطوة
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={closeTaskForm}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium cursor-pointer"
-            >
-              إلغاء
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-md shadow-cyan-600/20 cursor-pointer"
-            >
-              {editingTaskId ? 'حفظ التعديلات' : 'حفظ وإدراج المهمة'}
-            </button>
-          </div>
-        </form>
-      )}
+      {/* Task Modal handles manual add & full editing including recurrence */}
 
       {/* Undo Deleted Task Toast Banner */}
       {deletedUndoTask && (
@@ -1256,6 +813,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     setActiveSwipe(null);
                     setInlineEditingTaskId(task.id);
                   }}
+                  onOpenFullEditModal={() => openEditTaskModal(task)}
                   onCancelInlineEdit={() => setInlineEditingTaskId(null)}
                   onSaveInlineEdit={(updatedTask) => {
                     onUpdateTask(updatedTask);
@@ -1376,6 +934,22 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                             </span>
                           )}
 
+                          {task.recurrence?.enabled && (
+                            <span
+                              className="flex items-center gap-1 text-emerald-200 bg-emerald-950/80 border border-emerald-700/60 px-2 py-0.5 rounded-md text-[11px] font-semibold"
+                              title={`مهمة متكررة تلقائياً (${formatRecurrenceLabelAr(task.recurrence)})`}
+                            >
+                              <Repeat className="w-3 h-3 text-emerald-400 shrink-0" />
+                              <span>{formatRecurrenceLabelAr(task.recurrence)}</span>
+                              {task.recurrence.occurrenceCount &&
+                                task.recurrence.occurrenceCount > 1 && (
+                                  <span className="font-mono text-[10px] opacity-80">
+                                    #{task.recurrence.occurrenceCount}
+                                  </span>
+                                )}
+                            </span>
+                          )}
+
                           {task.suggestedPostpone && (!task.dueDate || task.dueDate < tomorrowStr) && (
                             <span className="flex items-center gap-1 text-indigo-300 bg-indigo-950/70 border border-indigo-800/60 px-2 py-0.5 rounded-md text-[11px] font-medium">
                               <CalendarClock className="w-3 h-3" />
@@ -1465,15 +1039,12 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         );
                       })()}
 
-                      {/* Inline Edit Task */}
+                      {/* Open Task Edit Modal (with Recurrence, Subtasks, Tags & Location) */}
                       <button
                         type="button"
-                        onClick={() => {
-                          setActiveSwipe(null);
-                          setInlineEditingTaskId(task.id);
-                        }}
+                        onClick={() => openEditTaskModal(task)}
                         className="p-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 border border-slate-700 transition-all cursor-pointer"
-                        title="تعديل المهمة مباشرة"
+                        title="تعديل المهمة وضبط التكرار"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
                       </button>
@@ -1584,6 +1155,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         setActiveSwipe(null);
                         setInlineEditingTaskId(task.id);
                       }}
+                      onOpenFullEditModal={() => openEditTaskModal(task)}
                       onCancelInlineEdit={() => setInlineEditingTaskId(null)}
                       onSaveInlineEdit={(updatedTask) => {
                         onUpdateTask(updatedTask);
@@ -1601,12 +1173,22 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <h5 className="text-xs font-semibold text-slate-200">{task.title}</h5>
-                        <button
-                          onClick={() => onUpdateTask({ ...task, status: 'in_progress' })}
-                          className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 cursor-pointer shrink-0"
-                        >
-                          بدء
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditTaskModal(task)}
+                            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 cursor-pointer"
+                            title="تعديل المهمة وضبط التكرار"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => onUpdateTask({ ...task, status: 'in_progress' })}
+                            className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 cursor-pointer"
+                          >
+                            بدء
+                          </button>
+                        </div>
                       </div>
                       {(task.tags?.length || 0) > 0 && (
                         <div className="flex flex-wrap items-center gap-1">
@@ -1628,6 +1210,12 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         <div className="inline-flex items-center gap-1 text-[10px] text-cyan-300 bg-cyan-950/60 border border-cyan-800/50 px-1.5 py-0.5 rounded">
                           <MapPin className="w-2.5 h-2.5" />
                           <span>{task.locationReminder.locationName}</span>
+                        </div>
+                      )}
+                      {task.recurrence?.enabled && (
+                        <div className="inline-flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded">
+                          <Repeat className="w-2.5 h-2.5" />
+                          <span>{formatRecurrenceLabelAr(task.recurrence)}</span>
                         </div>
                       )}
                       <div className="flex items-center justify-between text-[10px]">
@@ -1687,6 +1275,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         setActiveSwipe(null);
                         setInlineEditingTaskId(task.id);
                       }}
+                      onOpenFullEditModal={() => openEditTaskModal(task)}
                       onCancelInlineEdit={() => setInlineEditingTaskId(null)}
                       onSaveInlineEdit={(updatedTask) => {
                         onUpdateTask(updatedTask);
@@ -1704,12 +1293,22 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <h5 className="text-xs font-semibold text-slate-100">{task.title}</h5>
-                        <button
-                          onClick={() => onToggleTask(task.id)}
-                          className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 cursor-pointer shrink-0"
-                        >
-                          إكمال
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openEditTaskModal(task)}
+                            className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 cursor-pointer"
+                            title="تعديل المهمة وضبط التكرار"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => onToggleTask(task.id)}
+                            className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 cursor-pointer"
+                          >
+                            إكمال
+                          </button>
+                        </div>
                       </div>
                       {(task.tags?.length || 0) > 0 && (
                         <div className="flex flex-wrap items-center gap-1">
@@ -1731,6 +1330,12 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         <div className="inline-flex items-center gap-1 text-[10px] text-cyan-300 bg-cyan-950/60 border border-cyan-800/50 px-1.5 py-0.5 rounded">
                           <MapPin className="w-2.5 h-2.5" />
                           <span>{task.locationReminder.locationName}</span>
+                        </div>
+                      )}
+                      {task.recurrence?.enabled && (
+                        <div className="inline-flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded">
+                          <Repeat className="w-2.5 h-2.5" />
+                          <span>{formatRecurrenceLabelAr(task.recurrence)}</span>
                         </div>
                       )}
                       <div className="flex items-center justify-between text-[10px]">
@@ -1790,6 +1395,7 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                         setActiveSwipe(null);
                         setInlineEditingTaskId(task.id);
                       }}
+                      onOpenFullEditModal={() => openEditTaskModal(task)}
                       onCancelInlineEdit={() => setInlineEditingTaskId(null)}
                       onSaveInlineEdit={(updatedTask) => {
                         onUpdateTask(updatedTask);
@@ -1806,13 +1412,30 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
                       foregroundClassName="bg-slate-950 p-3"
                     >
                       <h5 className="text-xs font-medium line-through text-slate-400">{task.title}</h5>
-                      <div className="flex justify-end mt-2">
-                        <button
-                          onClick={() => onToggleTask(task.id)}
-                          className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
-                        >
-                          إعادة فتح
-                        </button>
+                      <div className="flex items-center justify-between gap-2 mt-2">
+                        {task.recurrence?.enabled ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
+                            <Repeat className="w-2.5 h-2.5" />
+                            <span>{formatRecurrenceLabelAr(task.recurrence)}</span>
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEditTaskModal(task)}
+                            className="text-[10px] text-cyan-400 hover:underline cursor-pointer"
+                          >
+                            تعديل
+                          </button>
+                          <button
+                            onClick={() => onToggleTask(task.id)}
+                            className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
+                          >
+                            إعادة فتح
+                          </button>
+                        </div>
                       </div>
                     </SwipeableTaskCard>
                   );
@@ -1928,13 +1551,33 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
         onClose={() => setReminderTarget(null)}
       />
 
+      <TaskEditModal
+        isOpen={taskModalOpen}
+        taskToEdit={taskModalTarget}
+        tasks={tasks}
+        savedLocations={savedLocations}
+        locationTrackingEnabled={locationTrackingEnabled}
+        customTags={customTags}
+        onClose={() => {
+          setTaskModalOpen(false);
+          setTaskModalTarget(null);
+          setCreatedLocationIdForModal(null);
+        }}
+        onSaveNewTask={onAddTask}
+        onUpdateTask={onUpdateTask}
+        onOpenLocationPicker={onSaveLocation ? () => setLocationPickerOpen(true) : undefined}
+        newlyCreatedLocationId={createdLocationIdForModal}
+        onCreateCustomTag={onCreateCustomTag}
+        onDeleteCustomTag={onDeleteCustomTag}
+      />
+
       {onSaveLocation && (
         <LocationPickerModal
           isOpen={locationPickerOpen}
           onClose={() => setLocationPickerOpen(false)}
           onSave={(loc) => {
             onSaveLocation(loc);
-            setNewLocationId(loc.id);
+            setCreatedLocationIdForModal(loc.id);
           }}
         />
       )}
@@ -1953,6 +1596,41 @@ export const TasksHubView: React.FC<TasksHubViewProps> = ({
           setCsvImportSuccessMsg(
             `تم استيراد ${importedTasks.length} مهمة من ملف CSV وإضافتها إلى مهامك بنجاح.`
           );
+        }}
+      />
+
+      <TaskTemplatesModal
+        isOpen={isTemplatesOpen}
+        onClose={() => {
+          setIsTemplatesOpen(false);
+          setTemplateDraftTasks(null);
+        }}
+        templates={taskTemplates}
+        tasks={tasks}
+        customTags={customTags}
+        initialDraftTasks={templateDraftTasks}
+        onCreateTemplate={(tpl) => {
+          if (onCreateTaskTemplate) return onCreateTaskTemplate(tpl);
+          return {
+            id: tpl.id || `tpl-${Date.now()}`,
+            createdAt: new Date().toISOString(),
+            ...tpl,
+          };
+        }}
+        onUpdateTemplate={(tpl) => {
+          onUpdateTaskTemplate?.(tpl);
+        }}
+        onDeleteTemplate={(id) => {
+          onDeleteTaskTemplate?.(id);
+        }}
+        onApplyTemplate={(tpl, opts) => {
+          const addedCount = onApplyTaskTemplate ? onApplyTaskTemplate(tpl, opts) : 0;
+          if (addedCount > 0) {
+            setTemplateSuccessMsg(
+              `تمت إضافة ${addedCount} مهام دفعة واحدة من قالب "${tpl.name}" بنجاح.`
+            );
+          }
+          return addedCount;
         }}
       />
 

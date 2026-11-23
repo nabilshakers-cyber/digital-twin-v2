@@ -157,6 +157,10 @@
           "type": "array",
           "description": "Optional list of custom tag/label names assigned to the task (max 15 strings, max 40 chars each)."
         },
+        "recurrence": {
+          "type": "object",
+          "description": "Optional automatic task recurrence rule (frequency, interval, daysOfWeek, endDate) and series regeneration metadata."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -525,6 +529,80 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "TaskTemplateDoc": {
+      "title": "TaskTemplateDoc",
+      "description": "Reusable batch template containing a group of preconfigured tasks.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "icon": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "color": {
+          "type": "string",
+          "enum": ["cyan", "emerald", "amber", "rose", "purple", "blue"],
+          "maxLength": 24
+        },
+        "defaultCategory": {
+          "type": "string",
+          "enum": ["work", "personal", "health", "study", "urgent"],
+          "maxLength": 32
+        },
+        "items": {
+          "type": "array",
+          "description": "Bounded list of preconfigured task items in this template (max 40)."
+        },
+        "usageCount": {
+          "type": "number"
+        },
+        "clientCreatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "icon",
+        "color",
+        "defaultCategory",
+        "items",
+        "clientCreatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -569,6 +647,12 @@
         "$ref": "#/entities/PhoneAppListDoc"
       },
       "description": "User phone app shortcut lists synced across devices."
+    },
+    "/users/{userId}/taskTemplates/{templateId}": {
+      "schema": {
+        "$ref": "#/entities/TaskTemplateDoc"
+      },
+      "description": "User reusable batch task templates synced across devices."
     }
   }
 }

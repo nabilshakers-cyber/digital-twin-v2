@@ -6,6 +6,7 @@ import {
   Flame,
   Layers,
   Plus,
+  Repeat,
   Tag,
   Trash2,
   X,
@@ -13,14 +14,17 @@ import {
 } from 'lucide-react';
 import {
   Priority,
+  RecurrenceFrequency,
   SavedLocation,
   Task,
   TaskCategory,
+  TaskRecurrence,
   TaskStatus,
   TaskLocationReminder,
   TaskTag,
   TaskTagColor,
 } from '../types';
+import { normalizeRecurrence } from '../utils/taskRecurrence';
 import { getTagStyleForName, mergeAvailableTags, normalizeTagName } from '../utils/taskTags';
 
 export type SwipeOpenSide = 'left' | 'right';
@@ -33,6 +37,7 @@ interface SwipeableTaskCardProps {
   onCloseSwipe: () => void;
   isEditingInline: boolean;
   onStartInlineEdit: () => void;
+  onOpenFullEditModal?: () => void;
   onCancelInlineEdit: () => void;
   onSaveInlineEdit: (updatedTask: Task) => void;
   onChangePriority: (priority: Priority) => void;
@@ -103,6 +108,7 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
   onCloseSwipe,
   isEditingInline,
   onStartInlineEdit,
+  onOpenFullEditModal,
   onCancelInlineEdit,
   onSaveInlineEdit,
   onChangePriority,
@@ -129,6 +135,9 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
   const [draftLocationId, setDraftLocationId] = useState<string>(
     task.locationReminder?.enabled ? task.locationReminder.locationId : ''
   );
+  const [draftRecurrenceFreq, setDraftRecurrenceFreq] = useState<'none' | RecurrenceFrequency>(
+    task.recurrence?.enabled ? task.recurrence.frequency : 'none'
+  );
   const [draftTags, setDraftTags] = useState<string[]>(task.tags || []);
   const [inlineNewTag, setInlineNewTag] = useState<string>('');
   const [inlineError, setInlineError] = useState<string | null>(null);
@@ -145,6 +154,9 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
       setDraftDueTime(task.dueTime || '');
       setDraftLocationId(
         task.locationReminder?.enabled ? task.locationReminder.locationId : ''
+      );
+      setDraftRecurrenceFreq(
+        task.recurrence?.enabled ? task.recurrence.frequency : 'none'
       );
       setDraftTags(task.tags || []);
       setInlineNewTag('');
@@ -426,6 +438,21 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
       }
     }
 
+    const nextRecurrence: TaskRecurrence | undefined =
+      draftRecurrenceFreq === 'none'
+        ? undefined
+        : normalizeRecurrence({
+            ...(task.recurrence?.enabled ? task.recurrence : {}),
+            enabled: true,
+            frequency: draftRecurrenceFreq,
+            interval:
+              task.recurrence?.enabled && task.recurrence.frequency === draftRecurrenceFreq
+                ? task.recurrence.interval || 1
+                : 1,
+            daysOfWeek:
+              draftRecurrenceFreq === 'weekly' ? task.recurrence?.daysOfWeek : undefined,
+          });
+
     onSaveInlineEdit({
       ...task,
       title: draftTitle.trim(),
@@ -442,6 +469,7 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
       isUnclassified: false,
       tags: draftTags,
       locationReminder: nextLocationReminder,
+      recurrence: nextRecurrence,
       completedAt:
         draftStatus === 'completed'
           ? task.completedAt || new Date().toISOString()
@@ -572,14 +600,28 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>تعديل سريع داخل البطاقة</span>
               </span>
-              <button
-                type="button"
-                onClick={onCancelInlineEdit}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer"
-                title="إلغاء التعديل"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex items-center gap-1.5">
+                {onOpenFullEditModal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onCancelInlineEdit();
+                      onOpenFullEditModal();
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-[10px] font-semibold cursor-pointer"
+                  >
+                    النافذة الكاملة
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onCancelInlineEdit}
+                  className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer"
+                  title="إلغاء التعديل"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -727,6 +769,23 @@ export const SwipeableTaskCard: React.FC<SwipeableTaskCardProps> = ({
                     </select>
                   </div>
                 )}
+
+                <div className="flex items-center gap-1.5 min-w-[160px]">
+                  <Repeat className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <select
+                    value={draftRecurrenceFreq}
+                    onChange={(e) =>
+                      setDraftRecurrenceFreq(e.target.value as 'none' | RecurrenceFrequency)
+                    }
+                    aria-label="التكرار التلقائي"
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="none">بدون تكرار</option>
+                    <option value="daily">تكرار يومي</option>
+                    <option value="weekly">تكرار أسبوعي</option>
+                    <option value="monthly">تكرار شهري</option>
+                  </select>
+                </div>
               </div>
             )}
 
