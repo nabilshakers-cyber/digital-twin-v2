@@ -8,7 +8,7 @@ workflows:
         VITE_API_BASE: "https://digital-twin-v2-o9dw.onrender.com"
     scripts:
       - name: Install Dependencies
-        script: npm install
+        script: npm install --legacy-peer-deps
       - name: Install Capacitor
         script: npm install @capacitor/cli @capacitor/android
       - name: Install Local Notifications
