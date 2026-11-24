@@ -29,10 +29,12 @@ export default defineConfig({
             type: 'image/png'
           }
         ]
-      }
+      },
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // رفع الحد الأقصى إلى 5 ميجابايت
+      },
     })
   ],
-  // هذا الجزء هو الحل لمشكلة fsevents
   optimizeDeps: {
     exclude: ['fsevents']
   },
