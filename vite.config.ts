@@ -9,7 +9,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
         name: 'Digital Twin Task Manager',
         short_name: 'Digital Twin',
@@ -31,16 +31,16 @@ export default defineConfig({
         ]
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // رفع الحد الأقصى إلى 5 ميجابايت
-      },
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
+      }
     })
   ],
   optimizeDeps: {
-    exclude: ['fsevents']
+    exclude: ['fsevents', 'lightningcss']
   },
   build: {
     rollupOptions: {
-      external: ['fsevents']
+      external: ['fsevents', 'lightningcss']
     }
   }
 });
