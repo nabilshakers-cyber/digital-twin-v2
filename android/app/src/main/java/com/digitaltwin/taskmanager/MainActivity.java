@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -11,15 +12,67 @@ import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.Logger;
+import com.getcapacitor.Plugin;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 1001;
+    private static final String FIREBASE_AUTH_PLUGIN_CLASS =
+        "io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin";
+    private String firebasePluginDiagError = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        ensureFirebasePluginQueuedIfMissingFromAssets();
         super.onCreate(savedInstanceState);
+        checkFirebasePluginAfterBridgeInit();
         ensureMicrophonePermission();
         attachExternalLauncherBridge();
+    }
+
+    private void ensureFirebasePluginQueuedIfMissingFromAssets() {
+        try {
+            if (!assetsPluginsJsonContains(FIREBASE_AUTH_PLUGIN_CLASS)) {
+                Class<?> rawClass = Class.forName(FIREBASE_AUTH_PLUGIN_CLASS);
+                registerPlugin(rawClass.asSubclass(Plugin.class));
+            }
+        } catch (Throwable t) {
+            firebasePluginDiagError = t.getClass().getSimpleName() + ": " + t.getMessage();
+            Logger.error("MainActivity", "Failed pre-registering FirebaseAuthenticationPlugin", t);
+        }
+    }
+
+    private boolean assetsPluginsJsonContains(String className) {
+        AssetManager assets = getAssets();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(assets.open("capacitor.plugins.json")))) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line);
+            }
+            return sb.toString().contains(className);
+        } catch (Throwable t) {
+            firebasePluginDiagError = "assets-read-error: " + t.getMessage();
+            return false;
+        }
+    }
+
+    private void checkFirebasePluginAfterBridgeInit() {
+        if (this.bridge == null) {
+            firebasePluginDiagError = "bridge-is-null";
+            return;
+        }
+        if (this.bridge.getPlugin("FirebaseAuthentication") == null && firebasePluginDiagError.isEmpty()) {
+            try {
+                Class<?> rawClass = Class.forName(FIREBASE_AUTH_PLUGIN_CLASS);
+                firebasePluginDiagError = "class-present-but-not-in-bridge (" + rawClass.getName() + ")";
+            } catch (Throwable t) {
+                firebasePluginDiagError = "class-load-failed: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+            }
+        }
     }
 
     private void ensureMicrophonePermission() {
@@ -41,6 +94,22 @@ public class MainActivity extends BridgeActivity {
     }
 
     public class ExternalAppBridge {
+        @JavascriptInterface
+        public String getCapacitorDiagnostics() {
+            try {
+                JSONObject json = new JSONObject();
+                json.put("bridgeReady", bridge != null);
+                json.put("hasFirebaseAuthentication", bridge != null && bridge.getPlugin("FirebaseAuthentication") != null);
+                json.put("hasAppLauncher", bridge != null && bridge.getPlugin("AppLauncher") != null);
+                json.put("hasLocalNotifications", bridge != null && bridge.getPlugin("LocalNotifications") != null);
+                json.put("assetsHasFirebaseAuth", assetsPluginsJsonContains(FIREBASE_AUTH_PLUGIN_CLASS));
+                json.put("diagError", firebasePluginDiagError);
+                return json.toString();
+            } catch (Throwable t) {
+                return "{\"error\":\"" + String.valueOf(t.getMessage()) + "\"}";
+            }
+        }
+
         @JavascriptInterface
         public boolean openApp(String deepLink, String fallbackUrl) {
             String target = deepLink != null ? deepLink.trim() : "";

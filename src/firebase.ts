@@ -277,6 +277,29 @@ export async function signInWithGoogle(): Promise<AppAuthUser> {
     const firebaseApp = ensureFirebaseApp();
     const firebaseAuth = auth || getAuth(firebaseApp);
 
+    if (Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('FirebaseAuthentication')) {
+      step = 'checkNativeFirebasePlugin';
+      const capWin = window as unknown as {
+        Capacitor?: { Plugins?: Record<string, unknown> };
+        AndroidExternalLauncher?: { getCapacitorDiagnostics?: () => string };
+      };
+      let nativeDiag = 'no-diagnostic-bridge (APK may be built from older assets/native shell)';
+      try {
+        if (capWin.AndroidExternalLauncher?.getCapacitorDiagnostics) {
+          nativeDiag = capWin.AndroidExternalLauncher.getCapacitorDiagnostics();
+        }
+      } catch (diagErr) {
+        nativeDiag = `diag-call-failed: ${diagErr instanceof Error ? diagErr.message : String(diagErr)}`;
+      }
+      const registeredPlugins = Object.keys(capWin.Capacitor?.Plugins ?? {});
+      throw new Error(
+        `NATIVE_PLUGIN_MISSING: إضافة FirebaseAuthentication غير متوفرة داخل نسخة الأندرويد المثبتة حالياً. يجب مزامنة المشروع (npm run android:sync) وإعادة بناء وتثبيت ملف APK جديد (${JSON.stringify({
+          plugins: registeredPlugins,
+          nativeDiag,
+        })})`
+      );
+    }
+
     step = 'FirebaseAuthentication.signInWithGoogle';
     const authResult = await FirebaseAuthentication.signInWithGoogle({
       skipNativeAuth: true,
