@@ -18,21 +18,29 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script type="module" crossorigin src="/assets/index-D6VF8Fjv.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/charts-BNSHlOBi.js">
-    <link rel="modulepreload" crossorigin href="/assets/firebase-JahOlVBt.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-DOMPQqWZ.css">
+    <script type="module" crossorigin src="/assets/index-15jISNUX.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/charts-CCpJfbx_.js">
+    <link rel="modulepreload" crossorigin href="/assets/firebase-DYQAdzkb.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-xgNsxxjQ.css">
   </head>
   <body>
     <div id="root"></div>
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+      (function () {
+        var isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+        if (!('serviceWorker' in navigator)) return;
+        if (isNative) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (r) { r.unregister(); });
+          }).catch(function () {});
+          return;
+        }
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function (err) {
             console.warn('Service Worker registration failed:', err);
           });
         });
-      }
+      })();
     </script>
   </body>
 </html>

@@ -23,13 +23,21 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
+      (function () {
+        var isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+        if (!('serviceWorker' in navigator)) return;
+        if (isNative) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (r) { r.unregister(); });
+          }).catch(function () {});
+          return;
+        }
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function (err) {
             console.warn('Service Worker registration failed:', err);
           });
         });
-      }
+      })();
     </script>
   </body>
 </html>

@@ -695,12 +695,15 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  const authUid = authUser?.uid ?? null;
+  const authEmailVerified = Boolean(authUser?.emailVerified);
+
   // Firestore real-time synchronization (active when signed in & verified with Firebase Auth)
   useEffect(() => {
     if (
       !authReady ||
-      !authUser ||
-      !authUser.emailVerified ||
+      !authUid ||
+      !authEmailVerified ||
       !auth.currentUser
     ) {
       return;
@@ -712,10 +715,10 @@ export default function App() {
     const initSync = async () => {
       setCloudSyncStatus('syncing');
       try {
-        await ensureUserWorkspace(authUser.uid, latestSnapshotRef.current);
+        await ensureUserWorkspace(authUid, latestSnapshotRef.current);
         if (cancelled) return;
 
-        unsubCloud = subscribeUserCloudData(authUser.uid, {
+        unsubCloud = subscribeUserCloudData(authUid, {
           onWorkspace: (ws) => {
             if (ws.profile) setProfile(ws.profile);
             if (Array.isArray(ws.dashboardLayout) && ws.dashboardLayout.length > 0) {
@@ -725,7 +728,7 @@ export default function App() {
               );
               setDashboardLayout(merged);
               if (didPromote) {
-                void syncWorkspaceFields(authUser.uid, { dashboardLayout: merged });
+                void syncWorkspaceFields(authUid, { dashboardLayout: merged });
               }
             }
             if (ws.adhkarState) setAdhkarState(ws.adhkarState);
@@ -778,7 +781,7 @@ export default function App() {
       cancelled = true;
       if (unsubCloud) unsubCloud();
     };
-  }, [authReady, authUser]);
+  }, [authReady, authUid, authEmailVerified]);
 
   const runCloudMutation = async (fn: (uid: string) => Promise<void>) => {
     if (!authUser || !authUser.emailVerified || !auth.currentUser) return;

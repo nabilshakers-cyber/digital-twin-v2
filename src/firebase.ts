@@ -1,17 +1,21 @@
 import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { initializeApp } from 'firebase/app';
 import {
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
+  indexedDBLocalPersistence,
+  initializeAuth,
   reload,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithCredential,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
   updateProfile,
+  type Auth,
   type User,
 } from 'firebase/auth';
 import {
@@ -47,7 +51,19 @@ try {
 }
 
 export const db = firestoreInstance;
-export const auth = getAuth(app);
+
+export const auth: Auth = (() => {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      return initializeAuth(app, {
+        persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+      });
+    } catch {
+      return getAuth(app);
+    }
+  }
+  return getAuth(app);
+})();
 
 export interface AppAuthUser {
   uid: string;
@@ -123,21 +139,36 @@ export function mapFirebaseAuthError(err: unknown): string {
     case 'auth/network-request-failed':
       return 'تعذر الاتصال بخدمة المصادقة. يرجى التحقق من اتصال الإنترنت.';
     case 'auth/operation-not-allowed':
-      return 'تسجيل الدخول بالبريد وكلمة المرور غير مفعّل بعد في إعدادات Firebase Console لهذا المشروع.';
+      return 'طريقة تسجيل الدخول هذه غير مفعّلة بعد في إعدادات Firebase Console لهذا المشروع.';
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request':
       return 'تم إلغاء نافذة تسجيل الدخول عبر Google.';
     case 'auth/popup-blocked':
     case 'auth/operation-not-supported-in-this-environment':
-      return 'تعذر فتح نافذة تسجيل الدخول المنبثقة. يمكنك تسجيل الدخول بالبريد وكلمة المرور أو السماح بالنوافذ المنبثقة.';
+      return 'تعذر إتمام تسجيل الدخول في هذه البيئة. يمكنك تسجيل الدخول بالبريد وكلمة المرور.';
     case 'auth/unauthorized-domain':
       return 'النطاق الحالي غير مصرح به في Firebase Auth. يمكنك استخدام البريد وكلمة المرور أو إضافة النطاق في Firebase Console.';
     default: {
       const lowerMsg = message.toLowerCase();
-      if (lowerMsg.includes('10:') || lowerMsg.includes('developer_error')) {
-        return 'إعدادات بصمة التطبيق (SHA-1) أو معرف العميل غير مكتملة في Firebase Console لنسخة الأندرويد.';
+      if (
+        lowerMsg.includes('10:') ||
+        lowerMsg.includes('developer_error') ||
+        lowerMsg.includes('developer console') ||
+        lowerMsg.includes('28444')
+      ) {
+        return 'إعدادات بصمة التطبيق (SHA-1) أو معرف العميل غير مطابقة في Firebase Console لنسخة الأندرويد.';
       }
-      if (lowerMsg.includes('network')) {
+      if (lowerMsg.includes('12500') || lowerMsg.includes('sign_in_failed')) {
+        return 'فشل تسجيل الدخول عبر Google على الأندرويد (12500). يرجى التأكد من إضافة بصمة SHA-1 وبريد الدعم في Firebase Console.';
+      }
+      if (
+        lowerMsg.includes('no credentials') ||
+        lowerMsg.includes('matching credential') ||
+        lowerMsg.includes('16:')
+      ) {
+        return 'لا توجد بيانات دخول متاحة لحساب Google على هذا الجهاز أو خدمات Google Play تحتاج تحديثاً.';
+      }
+      if (lowerMsg.includes('network') || lowerMsg.includes('7:')) {
         return 'تعذر الاتصال بخدمة المصادقة. يرجى التحقق من اتصال الإنترنت.';
       }
       if (message && /[\u0600-\u06FF]/.test(message)) {
@@ -147,9 +178,6 @@ export function mapFirebaseAuthError(err: unknown): string {
     }
   }
 }
-
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export async function signInWithEmail(email: string, password: string): Promise<AppAuthUser> {
   try {
@@ -200,29 +228,16 @@ export async function sendPasswordReset(email: string): Promise<void> {
 export async function signInWithGoogle(): Promise<AppAuthUser> {
   try {
     if (Capacitor.isNativePlatform()) {
-      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
-
       let nativeResult;
       try {
         nativeResult = await FirebaseAuthentication.signInWithGoogle({
           skipNativeAuth: true,
         });
       } catch (nativeErr) {
-        const errMsg = nativeErr instanceof Error
-          ? nativeErr.message.toLowerCase()
-          : String((nativeErr as { message?: unknown })?.message || '').toLowerCase();
-
-        const shouldFallbackToLegacyIntent =
-          !isUserCancellationError(nativeErr) &&
-          (errMsg.includes('unsupported') ||
-            errMsg.includes('not supported') ||
-            errMsg.includes('no credentials') ||
-            errMsg.includes('provider'));
-
-        if (!shouldFallbackToLegacyIntent) {
+        if (isUserCancellationError(nativeErr)) {
           throw nativeErr;
         }
-
+        // Fallback to classic Google Sign-In Intent if Credential Manager is unavailable or fails on device
         nativeResult = await FirebaseAuthentication.signInWithGoogle({
           skipNativeAuth: true,
           useCredentialManager: false,
@@ -230,21 +245,35 @@ export async function signInWithGoogle(): Promise<AppAuthUser> {
       }
 
       const idToken = nativeResult.credential?.idToken;
-      const accessToken = nativeResult.credential?.accessToken;
-
       if (!idToken) {
         throw new Error('تعذر الحصول على رمز التحقق (ID Token) من Google. يرجى المحاولة مرة أخرى.');
       }
 
-      const credential = GoogleAuthProvider.credential(idToken, accessToken);
+      const credential = GoogleAuthProvider.credential(idToken);
       const result = await signInWithCredential(auth, credential);
       clearLocalAuthUser();
       return toAppAuthUser(result.user);
     }
 
-    const result = await signInWithPopup(auth, googleProvider);
-    clearLocalAuthUser();
-    return toAppAuthUser(result.user);
+    const webResult = await FirebaseAuthentication.signInWithGoogle({
+      skipNativeAuth: true,
+      customParameters: [{ key: 'prompt', value: 'select_account' }],
+    });
+
+    const idToken = webResult.credential?.idToken;
+    if (idToken) {
+      const credential = GoogleAuthProvider.credential(idToken);
+      const result = await signInWithCredential(auth, credential);
+      clearLocalAuthUser();
+      return toAppAuthUser(result.user);
+    }
+
+    if (auth.currentUser) {
+      clearLocalAuthUser();
+      return toAppAuthUser(auth.currentUser);
+    }
+
+    throw new Error('تعذر الحصول على رمز التحقق (ID Token) من Google. يرجى المحاولة مرة أخرى.');
   } catch (err) {
     throw new Error(mapFirebaseAuthError(err));
   }
@@ -275,7 +304,6 @@ export async function signOutUser(): Promise<void> {
   clearLocalAuthUser();
   if (Capacitor.isNativePlatform()) {
     try {
-      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
       await FirebaseAuthentication.signOut();
     } catch {
       // Never block sign-out if native credential state is already empty

@@ -1,11 +1,20 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import {Capacitor} from '@capacitor/core';
 import {registerSW} from 'virtual:pwa-register';
 import App from './App.tsx';
 import {ErrorBoundary} from './components/ErrorBoundary.tsx';
 import './index.css';
 
-if (import.meta.env.PROD) {
+if (Capacitor.isNativePlatform()) {
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then((registrations) => {
+      for (const reg of registrations) {
+        void reg.unregister();
+      }
+    }).catch(() => {});
+  }
+} else if (import.meta.env.PROD) {
   registerSW({ immediate: true });
 }
 
