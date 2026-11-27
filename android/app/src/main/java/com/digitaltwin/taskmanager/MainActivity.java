@@ -2,6 +2,7 @@ package com.digitaltwin.taskmanager;
 
 import android.Manifest;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
@@ -16,6 +17,7 @@ import com.getcapacitor.Logger;
 import com.getcapacitor.Plugin;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.util.List;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
@@ -23,14 +25,34 @@ public class MainActivity extends BridgeActivity {
     private static final String FIREBASE_AUTH_PLUGIN_CLASS =
         "io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin";
     private String firebasePluginDiagError = "";
+    private String firebaseInitDiag = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        ensureNativeFirebaseInitialized();
         ensureFirebasePluginQueuedIfMissingFromAssets();
         super.onCreate(savedInstanceState);
         checkFirebasePluginAfterBridgeInit();
         ensureMicrophonePermission();
         attachExternalLauncherBridge();
+    }
+
+    private void ensureNativeFirebaseInitialized() {
+        try {
+            Class<?> firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp");
+            List<?> apps = (List<?>) firebaseAppClass.getMethod("getApps", Context.class).invoke(null, this);
+            if (apps == null || apps.isEmpty()) {
+                Object initialized = firebaseAppClass.getMethod("initializeApp", Context.class).invoke(null, this);
+                List<?> appsAfter = (List<?>) firebaseAppClass.getMethod("getApps", Context.class).invoke(null, this);
+                firebaseInitDiag = "init-attempted(result=" + (initialized != null) + ",count=" + (appsAfter != null ? appsAfter.size() : 0) + ")";
+            } else {
+                firebaseInitDiag = "already-initialized(count=" + apps.size() + ")";
+            }
+        } catch (Throwable t) {
+            Throwable root = t.getCause() != null ? t.getCause() : t;
+            firebaseInitDiag = "init-error: " + root.getClass().getSimpleName() + ": " + root.getMessage();
+            Logger.error("MainActivity", "Native FirebaseApp init check failed", root);
+        }
     }
 
     private void ensureFirebasePluginQueuedIfMissingFromAssets() {
@@ -66,11 +88,25 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         if (this.bridge.getPlugin("FirebaseAuthentication") == null && firebasePluginDiagError.isEmpty()) {
+            String stage = "forName";
             try {
                 Class<?> rawClass = Class.forName(FIREBASE_AUTH_PLUGIN_CLASS);
-                firebasePluginDiagError = "class-present-but-not-in-bridge (" + rawClass.getName() + ")";
+                stage = "newInstance";
+                Plugin testInstance = rawClass.asSubclass(Plugin.class).getDeclaredConstructor().newInstance();
+                stage = "PluginHandle.loadInstance";
+                new com.getcapacitor.PluginHandle(this.bridge, testInstance);
+                firebasePluginDiagError = "manual-load-ok-but-not-in-bridge";
             } catch (Throwable t) {
-                firebasePluginDiagError = "class-load-failed: " + t.getClass().getSimpleName() + ": " + t.getMessage();
+                Throwable root = t.getCause() != null ? t.getCause() : t;
+                StackTraceElement[] st = root.getStackTrace();
+                String loc = st != null && st.length > 0
+                    ? (" @ " + st[0].getClassName() + "." + st[0].getMethodName() + ":" + st[0].getLineNumber())
+                    : "";
+                String loc2 = st != null && st.length > 1
+                    ? (" <- " + st[1].getClassName() + "." + st[1].getMethodName() + ":" + st[1].getLineNumber())
+                    : "";
+                firebasePluginDiagError = "stage[" + stage + "]: " + root.getClass().getName() + ": " + root.getMessage() + loc + loc2;
+                Logger.error("MainActivity", "FirebaseAuthenticationPlugin diagnostic load failed at " + stage, root);
             }
         }
     }
@@ -103,6 +139,13 @@ public class MainActivity extends BridgeActivity {
                 json.put("hasAppLauncher", bridge != null && bridge.getPlugin("AppLauncher") != null);
                 json.put("hasLocalNotifications", bridge != null && bridge.getPlugin("LocalNotifications") != null);
                 json.put("assetsHasFirebaseAuth", assetsPluginsJsonContains(FIREBASE_AUTH_PLUGIN_CLASS));
+                json.put("firebaseInit", firebaseInitDiag);
+                int webClientResId = getResources().getIdentifier("default_web_client_id", "string", getPackageName());
+                json.put("hasDefaultWebClientId", webClientResId != 0);
+                if (webClientResId != 0) {
+                    String val = getString(webClientResId);
+                    json.put("defaultWebClientIdValid", val != null && !val.isEmpty() && !"WILL_BE_OVERRIDDEN".equals(val));
+                }
                 json.put("diagError", firebasePluginDiagError);
                 return json.toString();
             } catch (Throwable t) {
