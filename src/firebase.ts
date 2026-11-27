@@ -1,8 +1,9 @@
+import { app, ensureFirebaseApp, firebaseExtraConfig } from './firebaseApp';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
-import { initializeApp } from 'firebase/app';
+import { getApps } from 'firebase/app';
 import {
-  browserLocalPersistence,
+  browserPopupRedirectResolver,
   createUserWithEmailAndPassword,
   getAuth,
   GoogleAuthProvider,
@@ -27,13 +28,10 @@ import {
   getDocFromServer,
   type Firestore,
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+export { app };
 
-const firestoreDatabaseId =
-  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
-  'ai-studio-digitaltwintaskm-9dac13b3-7978-4cfa-aa0e-77a427f44496';
+const firestoreDatabaseId = firebaseExtraConfig.firestoreDatabaseId;
 
 let firestoreInstance: Firestore;
 try {
@@ -53,16 +51,14 @@ try {
 export const db = firestoreInstance;
 
 export const auth: Auth = (() => {
-  if (Capacitor.isNativePlatform()) {
-    try {
-      return initializeAuth(app, {
-        persistence: [indexedDBLocalPersistence, browserLocalPersistence],
-      });
-    } catch {
-      return getAuth(app);
-    }
+  try {
+    return initializeAuth(app, {
+      persistence: indexedDBLocalPersistence,
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
+  } catch {
+    return getAuth(app);
   }
-  return getAuth(app);
 })();
 
 export interface AppAuthUser {
@@ -95,16 +91,74 @@ export function toAppAuthUser(fbUser: User): AppAuthUser {
   };
 }
 
-function isUserCancellationError(err: unknown): boolean {
-  const anyErr = err as { code?: unknown; message?: unknown } | null;
-  const code = typeof anyErr?.code === 'string' ? anyErr.code.toLowerCase() : '';
-  const msg = typeof anyErr?.message === 'string' ? anyErr.message.toLowerCase() : '';
-  return (
-    code.includes('cancel') ||
-    msg.includes('cancel') ||
-    msg.includes('12501') ||
-    msg.includes('dismissed')
-  );
+function extractRawErrorDetails(err: unknown): {
+  code: string;
+  name: string;
+  message: string;
+  raw: string;
+} {
+  const anyErr =
+    err && typeof err === 'object' ? (err as Record<string, unknown>) : null;
+  const code =
+    anyErr && anyErr.code !== undefined && anyErr.code !== null
+      ? String(anyErr.code)
+      : '';
+  const name =
+    err instanceof Error
+      ? err.name
+      : anyErr && typeof anyErr.name === 'string'
+        ? anyErr.name
+        : '';
+  const message =
+    err instanceof Error
+      ? err.message
+      : anyErr && typeof anyErr.message === 'string'
+        ? anyErr.message
+        : typeof err === 'string'
+          ? err
+          : '';
+  let raw = '';
+  try {
+    raw =
+      err instanceof Error
+        ? JSON.stringify({
+            name: err.name,
+            code: (err as { code?: unknown }).code ?? null,
+            message: err.message,
+            ...(anyErr || {}),
+          })
+        : JSON.stringify(err);
+  } catch {
+    raw = String(err);
+  }
+  return { code, name, message, raw };
+}
+
+function formatGoogleSignInError(err: unknown, step?: string): string {
+  const { code, name, message, raw } = extractRawErrorDetails(err);
+  let appsCount = 0;
+  try {
+    appsCount = getApps().length;
+  } catch {
+    appsCount = -1;
+  }
+  const technicalParts = [
+    step ? `step: ${step}` : '',
+    code ? `code: ${code}` : '',
+    name && name !== 'Error' ? `type: ${name}` : '',
+    message ? `message: ${message}` : '',
+    !code && !message && raw ? `raw: ${raw}` : '',
+    `platform: ${Capacitor.getPlatform()}`,
+    `native: ${Capacitor.isNativePlatform()}`,
+    `apps: ${appsCount}`,
+  ].filter(Boolean);
+  const technicalDetails = technicalParts.join(' | ') || String(err);
+  const hint = mapFirebaseAuthError(err);
+
+  if (hint && hint !== 'تعذر إتمام العملية حالياً. يرجى التحقق من البيانات والمحاولة مرة أخرى.') {
+    return `${hint} (${technicalDetails})`;
+  }
+  return `فشل تسجيل الدخول عبر Google: ${technicalDetails}`;
 }
 
 export function mapFirebaseAuthError(err: unknown): string {
@@ -116,10 +170,6 @@ export function mapFirebaseAuthError(err: unknown): string {
     : typeof (err as { message?: unknown })?.message === 'string'
       ? String((err as { message: string }).message)
       : '';
-
-  if (isUserCancellationError(err)) {
-    return 'تم إلغاء تسجيل الدخول عبر Google.';
-  }
 
   switch (code) {
     case 'auth/invalid-email':
@@ -137,17 +187,13 @@ export function mapFirebaseAuthError(err: unknown): string {
     case 'auth/too-many-requests':
       return 'تم تنفيذ محاولات كثيرة متتالية. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.';
     case 'auth/network-request-failed':
-      return 'تعذر الاتصال بخدمة المصادقة. يرجى التحقق من اتصال الإنترنت.';
+      return 'تعذر الاتصال بخدمة المصادقة (auth/network-request-failed). يرجى التحقق من اتصال الإنترنت.';
+    case 'auth/internal-error':
+      return 'حدث خطأ داخلي في المصادقة (auth/internal-error).';
     case 'auth/operation-not-allowed':
       return 'طريقة تسجيل الدخول هذه غير مفعّلة بعد في إعدادات Firebase Console لهذا المشروع.';
-    case 'auth/popup-closed-by-user':
-    case 'auth/cancelled-popup-request':
-      return 'تم إلغاء نافذة تسجيل الدخول عبر Google.';
-    case 'auth/popup-blocked':
-    case 'auth/operation-not-supported-in-this-environment':
-      return 'تعذر إتمام تسجيل الدخول في هذه البيئة. يمكنك تسجيل الدخول بالبريد وكلمة المرور.';
     case 'auth/unauthorized-domain':
-      return 'النطاق الحالي غير مصرح به في Firebase Auth. يمكنك استخدام البريد وكلمة المرور أو إضافة النطاق في Firebase Console.';
+      return 'النطاق الحالي غير مصرح به في Firebase Auth.';
     default: {
       const lowerMsg = message.toLowerCase();
       if (
@@ -226,56 +272,61 @@ export async function sendPasswordReset(email: string): Promise<void> {
 }
 
 export async function signInWithGoogle(): Promise<AppAuthUser> {
+  let step = 'ensureFirebaseApp';
   try {
-    if (Capacitor.isNativePlatform()) {
-      let nativeResult;
-      try {
-        nativeResult = await FirebaseAuthentication.signInWithGoogle({
-          skipNativeAuth: true,
-        });
-      } catch (nativeErr) {
-        if (isUserCancellationError(nativeErr)) {
-          throw nativeErr;
-        }
-        // Fallback to classic Google Sign-In Intent if Credential Manager is unavailable or fails on device
-        nativeResult = await FirebaseAuthentication.signInWithGoogle({
-          skipNativeAuth: true,
-          useCredentialManager: false,
-        });
-      }
+    const firebaseApp = ensureFirebaseApp();
+    const firebaseAuth = auth || getAuth(firebaseApp);
 
-      const idToken = nativeResult.credential?.idToken;
-      if (!idToken) {
-        throw new Error('تعذر الحصول على رمز التحقق (ID Token) من Google. يرجى المحاولة مرة أخرى.');
-      }
-
-      const credential = GoogleAuthProvider.credential(idToken);
-      const result = await signInWithCredential(auth, credential);
-      clearLocalAuthUser();
-      return toAppAuthUser(result.user);
-    }
-
-    const webResult = await FirebaseAuthentication.signInWithGoogle({
+    step = 'FirebaseAuthentication.signInWithGoogle';
+    const authResult = await FirebaseAuthentication.signInWithGoogle({
       skipNativeAuth: true,
-      customParameters: [{ key: 'prompt', value: 'select_account' }],
+      useCredentialManager: true,
     });
 
-    const idToken = webResult.credential?.idToken;
-    if (idToken) {
-      const credential = GoogleAuthProvider.credential(idToken);
-      const result = await signInWithCredential(auth, credential);
-      clearLocalAuthUser();
-      return toAppAuthUser(result.user);
+    step = 'validateGoogleCredential';
+    const rawIdToken =
+      typeof authResult.credential?.idToken === 'string'
+        ? authResult.credential.idToken.trim()
+        : '';
+    const rawAccessToken =
+      typeof authResult.credential?.accessToken === 'string'
+        ? authResult.credential.accessToken.trim()
+        : '';
+
+    if (!rawIdToken) {
+      if (!Capacitor.isNativePlatform() && firebaseAuth.currentUser) {
+        clearLocalAuthUser();
+        return toAppAuthUser(firebaseAuth.currentUser);
+      }
+      if (!Capacitor.isNativePlatform() && rawAccessToken) {
+        step = 'GoogleAuthProvider.credential(accessToken)';
+        const accessCredential = GoogleAuthProvider.credential(null, rawAccessToken);
+        step = 'signInWithCredential(accessToken)';
+        const accessResult = await signInWithCredential(firebaseAuth, accessCredential);
+        clearLocalAuthUser();
+        return toAppAuthUser(accessResult.user);
+      }
+      throw new Error(
+        `MISSING_ID_TOKEN: لم يتم استلام رمز التحقق (idToken) من Google (${JSON.stringify({
+          platform: Capacitor.getPlatform(),
+          hasUser: Boolean(authResult.user),
+          hasCredential: Boolean(authResult.credential),
+          hasAccessToken: Boolean(rawAccessToken),
+          providerId: authResult.credential?.providerId ?? null,
+        })})`
+      );
     }
 
-    if (auth.currentUser) {
-      clearLocalAuthUser();
-      return toAppAuthUser(auth.currentUser);
-    }
+    step = 'GoogleAuthProvider.credential(idToken)';
+    const credential = GoogleAuthProvider.credential(rawIdToken);
 
-    throw new Error('تعذر الحصول على رمز التحقق (ID Token) من Google. يرجى المحاولة مرة أخرى.');
+    step = 'signInWithCredential';
+    const result = await signInWithCredential(firebaseAuth, credential);
+    clearLocalAuthUser();
+    return toAppAuthUser(result.user);
   } catch (err) {
-    throw new Error(mapFirebaseAuthError(err));
+    console.error(`[GoogleSignIn] Failed at step="${step}":`, err);
+    throw new Error(formatGoogleSignInError(err, step));
   }
 }
 

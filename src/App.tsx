@@ -893,9 +893,15 @@ export default function App() {
       const user = await signInWithGoogle();
       setAuthUser(user);
       setCloudSyncStatus('syncing');
-    } catch (err: any) {
-      console.error('Sign-In failed:', err);
-      setAuthError(err?.message || 'تعذر تسجيل الدخول.');
+    } catch (err: unknown) {
+      console.error('[App] Sign-In failed:', err);
+      const exactError =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : JSON.stringify(err);
+      setAuthError(exactError || 'فشل تسجيل الدخول عبر Google (خطأ غير معروف).');
     } finally {
       setAuthLoading(false);
     }

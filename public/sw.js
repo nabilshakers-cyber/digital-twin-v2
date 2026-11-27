@@ -1,7 +1,5 @@
-const CACHE_NAME = 'digital-twin-pwa-v2';
+const CACHE_NAME = 'digital-twin-pwa-v3';
 const APP_SHELL_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon.svg',
   '/apple-touch-icon.png',
@@ -40,8 +38,15 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // Skip cross-origin requests except Google Fonts and never cache /api/ routes
-  if (url.pathname.startsWith('/api/')) return;
+  // Never intercept API, Vite dev, source modules, or node_modules requests
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.startsWith('/node_modules/')
+  ) {
+    return;
+  }
   if (
     url.origin !== self.location.origin &&
     !url.hostname.includes('fonts.googleapis.com') &&
@@ -64,7 +69,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // Network-first for JS/CSS assets, cache-first only for static media
+  if (request.destination === 'script' || request.destination === 'style') {
+    event.respondWith(
+      fetch(request).catch(() => caches.match(request))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const fetchPromise = fetch(request)

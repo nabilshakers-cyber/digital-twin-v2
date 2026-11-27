@@ -11,6 +11,7 @@ const config: CapacitorConfig = {
   },
   server: {
     androidScheme: 'https',
+    allowNavigation: ['accounts.google.com', '*.google.com'],
   },
   plugins: {
     LocalNotifications: {

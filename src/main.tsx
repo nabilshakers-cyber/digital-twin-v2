@@ -1,3 +1,4 @@
+import './firebaseApp';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Capacitor} from '@capacitor/core';
@@ -6,7 +7,7 @@ import App from './App.tsx';
 import {ErrorBoundary} from './components/ErrorBoundary.tsx';
 import './index.css';
 
-if (Capacitor.isNativePlatform()) {
+if (Capacitor.isNativePlatform() || !import.meta.env.PROD) {
   if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then((registrations) => {
       for (const reg of registrations) {
@@ -14,7 +15,7 @@ if (Capacitor.isNativePlatform()) {
       }
     }).catch(() => {});
   }
-} else if (import.meta.env.PROD) {
+} else {
   registerSW({ immediate: true });
 }
 

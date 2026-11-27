@@ -18,7 +18,7 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script type="module" crossorigin src="/assets/index-3gJIRZ8-.js"></script>
+    <script type="module" crossorigin src="/assets/index-B2Xx_xgv.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-sCFy8K4p.css">
   <link rel="manifest" href="/manifest.webmanifest"></head>
   <body>
@@ -31,13 +31,7 @@
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (r) { r.unregister(); });
           }).catch(function () {});
-          return;
         }
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function (err) {
-            console.warn('Service Worker registration failed:', err);
-          });
-        });
       })();
     </script>
   </body>

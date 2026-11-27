@@ -30,13 +30,7 @@
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (r) { r.unregister(); });
           }).catch(function () {});
-          return;
         }
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function (err) {
-            console.warn('Service Worker registration failed:', err);
-          });
-        });
       })();
     </script>
   </body>

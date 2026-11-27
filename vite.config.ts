@@ -35,7 +35,16 @@ export default defineConfig({
       }
     })
   ],
+  resolve: {
+    dedupe: ['firebase', '@firebase/app', '@firebase/auth', '@firebase/firestore'],
+  },
   optimizeDeps: {
+    include: [
+      'firebase/app',
+      'firebase/auth',
+      'firebase/firestore',
+      '@capacitor-firebase/authentication',
+    ],
     exclude: ['fsevents', 'lightningcss']
   },
   build: {

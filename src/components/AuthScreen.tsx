@@ -156,7 +156,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       const user = await signInWithGoogle();
       onAuthSuccess(user);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'تعذر تسجيل الدخول عبر Google.');
+      console.error('[AuthScreen] Google sign-in error:', err);
+      const exactError =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : JSON.stringify(err);
+      setErrorMsg(exactError || 'فشل تسجيل الدخول عبر Google (خطأ غير معروف).');
     } finally {
       setGoogleLoading(false);
     }
@@ -245,7 +252,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/50 text-rose-200 text-xs flex items-start gap-2.5 leading-relaxed"
             >
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
+              <span className="break-words min-w-0">{errorMsg}</span>
             </div>
           )}
 
