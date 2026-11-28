@@ -46,11 +46,55 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
+def googleServicesApplied = false
 try {
     def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
+    if (!servicesJSON.exists()) {
+        def altServices = [
+            rootProject.file('google-services.json'),
+            rootProject.file('../google-services.json'),
+            rootProject.file('../public/google-services.json')
+        ].find { it.exists() && it.length() > 0 }
+        if (altServices != null) {
+            servicesJSON.text = altServices.text
+        }
     }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+    if (servicesJSON.exists() && servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+        googleServicesApplied = true
+    } else {
+        logger.warn("google-services.json not found in android/app; using firebase-applet-config.json fallback resources")
+    }
+} catch (Exception e) {
+    logger.warn("com.google.gms.google-services plugin skipped (${e.message}); using firebase-applet-config.json fallback resources")
+}
+
+def fallbackResDir = new File(layout.buildDirectory.get().asFile, "generated/res/firebase-fallback")
+if (googleServicesApplied) {
+    if (fallbackResDir.exists()) {
+        fallbackResDir.deleteDir()
+    }
+} else {
+    def appletConfigFile = rootProject.file('../firebase-applet-config.json')
+    if (appletConfigFile.exists()) {
+        def cfg = new groovy.json.JsonSlurper().parse(appletConfigFile)
+        def valuesDir = new File(fallbackResDir, "values")
+        valuesDir.mkdirs()
+        def xmlEscape = { String s ->
+            (s ?: '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        }
+        def xmlContent = """<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="default_web_client_id" translatable="false">${xmlEscape(cfg.oAuthClientId as String)}</string>
+    <string name="gcm_defaultSenderId" translatable="false">${xmlEscape(cfg.messagingSenderId as String)}</string>
+    <string name="google_api_key" translatable="false">${xmlEscape(cfg.apiKey as String)}</string>
+    <string name="google_crash_reporting_api_key" translatable="false">${xmlEscape(cfg.apiKey as String)}</string>
+    <string name="google_app_id" translatable="false">${xmlEscape(cfg.appId as String)}</string>
+    <string name="google_storage_bucket" translatable="false">${xmlEscape(cfg.storageBucket as String)}</string>
+    <string name="project_id" translatable="false">${xmlEscape(cfg.projectId as String)}</string>
+</resources>
+"""
+        new File(valuesDir, "values.xml").write(xmlContent, "UTF-8")
+        android.sourceSets.main.res.srcDir(fallbackResDir)
+    }
 }
